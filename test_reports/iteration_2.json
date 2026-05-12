@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 2: Tested 2026 reverse-engineering upgrades. Backend = 21/21 pytest PASS (auth, scrape lifecycle, velocity_score/saturation_index/promoted_cpa_pct/promoted_cpa_signal/momentum_gap/high_ticket_vacuum in result; reviews_last_7d/total_reviews/median_price/top_decile_price/price_inflation_pct/high_ticket_count/promoted_count/promoted_pct in metrics; reviews_last_7d+favourites+is_promoted on each gig; /api/autocomplete returns source+suggestions with auth + short-query skip; /api/ai/trend-verdict returns FLASH_IN_PAN|LONG_TERM_SURGE|NEUTRAL verdict + matched_trend + horizon_months + reasoning; /api/ai/proximity returns autocomplete{} + map.sidesteps[]; CSV export now includes favourites column; trends snapshots store velocity_score+median_price+saturation_index; price_inflation_pct populates after 2nd snapshot). Frontend: autocomplete dropdown works perfectly (data-testid=autocomplete-dropdown, 11 suggestions, debounced), AI 2026 TREND button renders LONG_TERM_SURGE verdict with Vertical SaaS trend (ai-verdict-output), AI PROXIMITY renders sidesteps map (ai-proximity-output), AD badge logic in GigTable. CRITICAL UI GAP: Dashboard.jsx imports VelocityCard but never renders it, and the new metric tiles metric-saturation-index, metric-promoted, metric-median are MISSING from the metrics grid — only metric-ceiling exists.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Dashboard.jsx", "issue": "VelocityCard is imported but never rendered. data-testid=velocity-card is missing from the rendered page. Velocity Score (with MOMENTUM GAP / HIGH-TICKET VACUUM badges) is not visible to user.", "selector": "[data-testid=\"velocity-card\"]", "priority": "HIGH"},
+      {"component": "Dashboard.jsx metrics grid (line ~269-276)", "issue": "Missing tiles: metric-saturation-index, metric-promoted, metric-median. Backend returns saturation_index, promoted_cpa_pct, metrics.median_price but UI does not surface them. Only metric-ceiling exists out of the 4 spec tiles.", "selector": "[data-testid=\"metric-saturation-index\"], [data-testid=\"metric-promoted\"], [data-testid=\"metric-median\"]", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Scan results render", "issue": "New 2026 analytics computed by backend (velocity_score, saturation_index, promoted_cpa_pct, momentum_gap, high_ticket_vacuum, median_price) are not surfaced in the UI because VelocityCard + 3 metric tiles are not wired in Dashboard.jsx", "affected_selectors": ["[data-testid=\"velocity-card\"]", "[data-testid=\"metric-saturation-index\"]", "[data-testid=\"metric-promoted\"]", "[data-testid=\"metric-median\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "Dashboard top-right (carry-over from iter 1)", "issues": ["Success toast 'Welcome back.' overlaps the SIGN OUT / user email area"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_backend.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Render <VelocityCard score={result.velocity_score} momentumGap={result.momentum_gap} highTicketVacuum={result.high_ticket_vacuum} /> in Dashboard.jsx — currently imported but never used",
+    "Add 3 new MetricTiles to the metrics grid in Dashboard.jsx: metric-saturation-index (value=result.saturation_index, tone gold/danger by threshold), metric-promoted (value=result.metrics.promoted_pct%, sublabel result.promoted_cpa_signal), metric-median (value=$result.metrics.median_price, sublabel price_inflation_pct if present). Grid may need to expand from 6 to 8+ columns or wrap.",
+    "Optionally show price_inflation_pct as sub-label on metric-median (e.g. '+12% vs prior')"
+  ],
+  "critical_code_review_comments": [
+    "Dashboard.jsx imports VelocityCard from ../components/ScoreCards but never instantiates it — dead import + missing feature",
+    "compute_opportunity in scraper.py: velocity_raw uses total_queue/total which can be slightly inflated since total_queue is for 20 sampled gigs whereas total is total marketplace gigs — formula intentionally proxies (Total Orders/Total Gigs) but the docstring should clarify this",
+    "scraper._live_scrape always returns None after parsing — wasted compute on Playwright launch every scrape. Consider a feature flag (e.g., env LIVE_SCRAPE_ENABLED) to skip live attempt when known to fail",
+    "server.py: trend_verdict and proximity_map both reuse PivotIn/ProximityIn models — fine, but separate naming would aid OpenAPI clarity",
+    "server.py /api/autocomplete spawns a full Playwright browser per request — high latency under load; consider caching or a shared browser pool"
+  ],
+  "updated_files": ["/app/backend/tests/test_backend.py"],
+  "success_rate": {"backend": "100%", "frontend": "70%"},
+  "test_credentials": "demo@fiverrscout.example.com / Demo1234!",
+  "seed_data_creation": "Demo user pre-existing; 2 new scrape jobs for 'logo design minimalist' and 'logo design for d2c' created; trend snapshots updated.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 21 backend tests in /app/backend/tests/test_backend.py pass. Live scrape continues to fall back to simulated_fallback (expected). The main agent must wire VelocityCard + 3 new MetricTiles into /app/frontend/src/pages/Dashboard.jsx (around line 269-276 metrics grid and after the Score/Ratio block at line 266). Once added, retest with data-testid selectors: velocity-card, metric-saturation-index, metric-promoted, metric-median.",
+  "rca_of_the_issue": "Dashboard.jsx was updated to import VelocityCard but the JSX render block was not updated to include <VelocityCard /> or the 3 new MetricTile components — likely an oversight when wiring the new analytics. The backend produces all required fields correctly (verified via pytest test_07_scrape_search_with_2026_fields)."
+}

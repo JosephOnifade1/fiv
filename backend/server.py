@@ -22,8 +22,11 @@ load_dotenv(ROOT_DIR / '.env')
 from auth import (
     hash_password, verify_password, create_token, get_current_user,
 )
-from scraper import deep_scrape, compute_opportunity
-from ai_insights import expand_keywords, summarize_report, suggest_pivots
+from scraper import deep_scrape, compute_opportunity, fetch_autocomplete
+from ai_insights import (
+    expand_keywords, summarize_report, suggest_pivots,
+    trend_verdict_2026, proximity_map,
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger("fiverr-scout")
@@ -80,6 +83,15 @@ class PivotIn(BaseModel):
     job_id: str
 
 
+class AutocompleteIn(BaseModel):
+    query: str
+    proxy_region: Optional[str] = None
+
+
+class ProximityIn(BaseModel):
+    job_id: str
+
+
 # ============ AUTH ============
 @api.post("/auth/register", response_model=AuthOut)
 async def register(body: RegisterIn):
@@ -119,8 +131,13 @@ async def me(user=Depends(get_current_user)):
 # ============ SCRAPE JOBS ============
 async def _run_scrape(job_id: str, keyword: str, user_id: str):
     try:
-        result = await deep_scrape(keyword)
-        # Save trend snapshot for week-over-week analysis
+        # Pull prior median price for inflation tracking
+        prior = await trend_col.find(
+            {"user_id": user_id, "keyword": keyword.lower()}, {"_id": 0, "median_price": 1}
+        ).sort("captured_at", -1).limit(1).to_list(1)
+        prior_median = (prior[0].get("median_price") if prior else None)
+
+        result = await deep_scrape(keyword, prior_median_price=prior_median)
         await trend_col.insert_one({
             "id": str(uuid.uuid4()),
             "user_id": user_id,
@@ -128,6 +145,9 @@ async def _run_scrape(job_id: str, keyword: str, user_id: str):
             "total_services": result["total_services"],
             "avg_orders_in_queue": result["metrics"]["avg_orders_in_queue"],
             "opportunity_score": result["opportunity_score"],
+            "velocity_score": result.get("velocity_score", 0),
+            "median_price": result["metrics"].get("median_price", 0),
+            "saturation_index": result.get("saturation_index", 0),
             "captured_at": datetime.now(timezone.utc).isoformat(),
         })
         await jobs_col.update_one(
@@ -197,14 +217,15 @@ async def export_job(job_id: str, format: str = "csv", user=Depends(get_current_
     writer = csv.writer(out)
     writer.writerow([
         "position", "title", "seller_level", "is_fiverr_pro", "price_from",
-        "orders_in_queue", "rating", "reviews_count", "last_review_at", "delivery_days",
+        "orders_in_queue", "favourites", "rating", "reviews_count",
+        "last_review_at", "delivery_days",
     ])
     for g in result.get("gigs", []):
         writer.writerow([
             g.get("position"), g.get("title"), g.get("seller_level"),
             g.get("is_fiverr_pro"), g.get("price_from"), g.get("orders_in_queue"),
-            g.get("rating"), g.get("reviews_count"), g.get("last_review_at"),
-            g.get("delivery_days"),
+            g.get("favourites"), g.get("rating"), g.get("reviews_count"),
+            g.get("last_review_at"), g.get("delivery_days"),
         ])
     writer.writerow([])
     writer.writerow(["KEYWORD", doc["keyword"]])
@@ -263,6 +284,50 @@ async def del_watch(wid: str, user=Depends(get_current_user)):
 
 
 # ============ TRENDS ============
+@api.get("/focus-keywords")
+async def focus_keywords(user=Depends(get_current_user), sort_by: str = "opportunity_score"):
+    """Top focus keywords across all completed jobs for the user.
+
+    sort_by: opportunity_score | orders | favourites | reviews
+    """
+    docs = await jobs_col.find(
+        {"user_id": user["id"], "status": "complete"}, {"_id": 0}
+    ).sort("created_at", -1).limit(100).to_list(100)
+
+    # Deduplicate by keyword keeping most recent
+    seen = {}
+    for d in docs:
+        kw = d["keyword"].lower()
+        if kw in seen:
+            continue
+        r = d.get("result") or {}
+        gigs = r.get("gigs", []) or []
+        seen[kw] = {
+            "keyword": d["keyword"],
+            "job_id": d["id"],
+            "scanned_at": d.get("created_at"),
+            "opportunity_score": r.get("opportunity_score", 0),
+            "competition_to_order_ratio": r.get("competition_to_order_ratio", 0),
+            "ratio_is_gold": r.get("ratio_is_gold", False),
+            "total_services": (r.get("metrics") or {}).get("total_services", 0),
+            "avg_orders": sum(g.get("orders_in_queue", 0) for g in gigs) / max(1, len(gigs)),
+            "total_favourites": sum(g.get("favourites", 0) for g in gigs),
+            "total_reviews": sum(g.get("reviews_count", 0) for g in gigs),
+            "data_source": r.get("data_source"),
+        }
+
+    items = list(seen.values())
+    key_map = {
+        "opportunity_score": "opportunity_score",
+        "orders": "avg_orders",
+        "favourites": "total_favourites",
+        "reviews": "total_reviews",
+    }
+    key = key_map.get(sort_by, "opportunity_score")
+    items.sort(key=lambda x: x.get(key, 0), reverse=True)
+    return {"sort_by": sort_by, "items": items[:25]}
+
+
 @api.get("/trends/{keyword}")
 async def get_trends(keyword: str, user=Depends(get_current_user)):
     snaps = await trend_col.find(
@@ -303,6 +368,35 @@ async def ai_pivots(body: PivotIn, user=Depends(get_current_user)):
         "metrics": r["metrics"],
     }
     return await suggest_pivots(doc["keyword"], analytics, r.get("tags", []))
+
+
+@api.post("/ai/trend-verdict")
+async def ai_trend_verdict(body: PivotIn, user=Depends(get_current_user)):
+    doc = await jobs_col.find_one({"id": body.job_id, "user_id": user["id"]}, {"_id": 0})
+    if not doc or not doc.get("result"):
+        raise HTTPException(status_code=404, detail="Job not ready")
+    r = doc["result"]
+    return await trend_verdict_2026(doc["keyword"], r)
+
+
+@api.post("/autocomplete")
+async def autocomplete(body: AutocompleteIn, user=Depends(get_current_user)):
+    if not body.query or len(body.query) < 2:
+        return {"source": "skip", "suggestions": []}
+    return await fetch_autocomplete(body.query, proxy_region=body.proxy_region)
+
+
+@api.post("/ai/proximity")
+async def ai_proximity(body: ProximityIn, user=Depends(get_current_user)):
+    doc = await jobs_col.find_one({"id": body.job_id, "user_id": user["id"]}, {"_id": 0})
+    if not doc or not doc.get("result"):
+        raise HTTPException(status_code=404, detail="Job not ready")
+    r = doc["result"]
+    auto = await fetch_autocomplete(doc["keyword"])
+    return {
+        "autocomplete": auto,
+        "map": await proximity_map(doc["keyword"], auto.get("suggestions", []), r.get("metrics", {})),
+    }
 
 
 @api.get("/")

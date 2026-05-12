@@ -1,15 +1,16 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useAuth } from "../AuthContext";
-import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import {
-  TrendUp, MagnifyingGlass, BookmarkSimple, SignOut, Download, FileCsv, FileText,
-  Clock, ChartLineUp, Tag, Star, CurrencyDollar, Lightning, Circle, XCircle,
+  TrendUp, BookmarkSimple, SignOut, FileCsv, FileText,
+  Clock, ChartLineUp, Tag, Circle, XCircle,
 } from "@phosphor-icons/react";
-import { ScoreGauge, RatioMeter, MetricTile } from "../components/ScoreCards";
+import { ScoreGauge, RatioMeter, MetricTile, VelocityCard } from "../components/ScoreCards";
 import { GigTable } from "../components/GigTable";
 import { AIPanel } from "../components/AIPanel";
+import { TopFocusKeywords } from "../components/TopFocusKeywords";
+import { SearchBar } from "../components/SearchBar";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -206,42 +207,22 @@ export default function Dashboard() {
         {/* Main */}
         <main className="p-6 lg:p-8 space-y-6 max-w-[1600px]">
           {/* Search */}
-          <div className="border border-zinc-200 bg-white">
-            <div className="flex items-center gap-2 p-2">
-              <MagnifyingGlass size={18} weight="bold" className="ml-3 text-zinc-400" />
-              <Input
-                data-testid="search-input"
-                value={keyword}
-                onChange={(e) => setKeyword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && startSearch()}
-                placeholder='e.g. "minimalist logo for organic skincare"'
-                className="border-0 rounded-none focus-visible:ring-0 h-11 font-mono text-sm flex-1"
-              />
-              <Button onClick={() => startSearch()} disabled={polling}
-                data-testid="search-submit"
-                className="rounded-none bg-black hover:bg-zinc-800 text-white font-mono text-xs uppercase tracking-[0.2em] h-11 px-6">
-                <Lightning size={14} weight="bold" className="mr-2" />
-                {polling ? "Scanning..." : "Scan"}
-              </Button>
-            </div>
-            {polling && (
-              <div className="h-1 bg-zinc-100 overflow-hidden">
-                <div className="h-full bg-amber-500 animate-pulse" style={{ width: "60%" }} />
-              </div>
-            )}
-          </div>
+          <SearchBar value={keyword} onChange={setKeyword} onSubmit={startSearch} busy={polling} authAxios={authAxios} />
 
           {!result && !polling && (
-            <div className="border border-zinc-200 bg-zinc-50 p-12 text-center">
-              <p className="text-[10px] uppercase tracking-[0.3em] font-mono text-zinc-400 mb-3">Empty terminal</p>
-              <h2 className="text-2xl font-black tracking-tight mb-2" style={{ fontFamily: "'Cabinet Grotesk', system-ui" }}>
-                Scan a keyword to begin.
-              </h2>
-              <p className="text-xs font-mono text-zinc-500 max-w-md mx-auto">
-                Try a long-tail phrase like <span className="font-bold">"logo for bio-hacking startups"</span> or
-                broader like <span className="font-bold">"video editing"</span>.
-              </p>
-            </div>
+            <>
+              <div className="border border-zinc-200 bg-zinc-50 p-12 text-center">
+                <p className="text-[10px] uppercase tracking-[0.3em] font-mono text-zinc-400 mb-3">Empty terminal</p>
+                <h2 className="text-2xl font-black tracking-tight mb-2" style={{ fontFamily: "'Cabinet Grotesk', system-ui" }}>
+                  Scan a keyword to begin.
+                </h2>
+                <p className="text-xs font-mono text-zinc-500 max-w-md mx-auto">
+                  Try a long-tail phrase like <span className="font-bold">"logo for bio-hacking startups"</span> or
+                  broader like <span className="font-bold">"video editing"</span>.
+                </p>
+              </div>
+              <TopFocusKeywords authAxios={authAxios} onPick={startSearch} refreshKey={history.length} />
+            </>
           )}
 
           {result && (
@@ -296,6 +277,9 @@ export default function Dashboard() {
 
               {/* AI */}
               <AIPanel job={activeJob} authAxios={authAxios} onPickKeyword={startSearch} />
+
+              {/* Top focus keywords across all scans */}
+              <TopFocusKeywords authAxios={authAxios} onPick={startSearch} refreshKey={history.length} />
 
               {/* Tables */}
               <div className="grid lg:grid-cols-2 gap-4">

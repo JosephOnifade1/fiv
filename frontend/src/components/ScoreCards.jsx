@@ -18,7 +18,6 @@ export const ScoreGauge = ({ score, breakdown }) => {
             <circle cx="50" cy="50" r="45" fill="none" stroke="#F3F4F6" strokeWidth="6" />
             <motion.circle
               cx="50" cy="50" r="45" fill="none" stroke={color} strokeWidth="6"
-              strokeLinecap="butt"
               strokeDasharray="283"
               initial={{ strokeDashoffset: 283 }}
               animate={{ strokeDashoffset: 283 - dash }}
@@ -84,10 +83,51 @@ export const RatioMeter = ({ ratio, isGold }) => (
   </div>
 );
 
-export const MetricTile = ({ label, value, sublabel, testid }) => (
-  <div className="border border-zinc-200 bg-white p-4" data-testid={testid}>
-    <div className="text-[10px] uppercase tracking-[0.2em] font-mono text-zinc-500">{label}</div>
-    <div className="text-2xl font-black tracking-tight mt-2 font-mono">{value}</div>
-    {sublabel && <div className="text-[10px] font-mono text-zinc-400 mt-1">{sublabel}</div>}
-  </div>
-);
+export const MetricTile = ({ label, value, sublabel, testid, tone }) => {
+  const toneCls = tone === "gold" ? "border-amber-500 bg-amber-50"
+    : tone === "danger" ? "border-red-300 bg-red-50"
+    : "border-zinc-200 bg-white";
+  return (
+    <div className={`border ${toneCls} p-4`} data-testid={testid}>
+      <div className="text-[10px] uppercase tracking-[0.2em] font-mono text-zinc-500">{label}</div>
+      <div className={`text-2xl font-black tracking-tight mt-2 font-mono ${tone === "gold" ? "text-amber-600" : ""}`}>{value}</div>
+      {sublabel && <div className="text-[10px] font-mono text-zinc-400 mt-1">{sublabel}</div>}
+    </div>
+  );
+};
+
+export const VelocityCard = ({ score, momentumGap, highTicketVacuum }) => {
+  const pct = Math.max(0, Math.min(100, score || 0));
+  return (
+    <div className="border border-zinc-200 bg-white p-6" data-testid="velocity-card">
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-[10px] uppercase tracking-[0.3em] font-mono text-zinc-500">Velocity Score</span>
+        <span className="text-[10px] font-mono text-zinc-400">2026 algorithm signal</span>
+      </div>
+      <div className="flex items-end gap-3 mb-3">
+        <div className="text-6xl font-black tracking-tighter font-mono">{pct.toFixed(0)}</div>
+        <div className="text-[10px] uppercase tracking-[0.2em] font-mono text-zinc-500 mb-2">
+          orders · review-7d
+        </div>
+      </div>
+      <div className="h-1.5 bg-zinc-100">
+        <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.8 }} className="h-full bg-amber-500" />
+      </div>
+      <div className="flex flex-wrap gap-2 mt-4">
+        {momentumGap && (
+          <span data-testid="badge-momentum-gap"
+            className="text-[10px] uppercase tracking-[0.2em] font-mono bg-amber-500 text-white px-2 py-0.5">
+            MOMENTUM GAP
+          </span>
+        )}
+        {highTicketVacuum && (
+          <span data-testid="badge-high-ticket-vacuum"
+            className="text-[10px] uppercase tracking-[0.2em] font-mono bg-black text-amber-400 px-2 py-0.5">
+            HIGH-TICKET VACUUM
+          </span>
+        )}
+      </div>
+    </div>
+  );
+};
