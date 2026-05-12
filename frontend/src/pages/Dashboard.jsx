@@ -259,20 +259,36 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Score + Ratio */}
-              <div className="grid lg:grid-cols-2 gap-4">
+              {/* Score + Ratio + Velocity */}
+              <div className="grid lg:grid-cols-3 gap-4">
                 <ScoreGauge score={result.opportunity_score} breakdown={result.breakdown} />
                 <RatioMeter ratio={result.competition_to_order_ratio} isGold={result.ratio_is_gold} />
+                <VelocityCard score={result.velocity_score}
+                  momentumGap={result.momentum_gap} highTicketVacuum={result.high_ticket_vacuum} />
               </div>
 
-              {/* Metrics */}
-              <div className="grid grid-cols-2 lg:grid-cols-6 gap-px bg-zinc-200">
+              {/* Metrics — 2026 reverse-engineering signals */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-px bg-zinc-200">
                 <MetricTile testid="metric-total" label="Total Gigs" value={result.metrics.total_services.toLocaleString()} sublabel={result.metrics.total_services < 2000 ? "LOW COMP" : "DENSE"} />
                 <MetricTile testid="metric-queue" label="Avg Queue" value={result.metrics.avg_orders_in_queue} sublabel={`top10 ${result.metrics.avg_queue_top10}`} />
-                <MetricTile testid="metric-velocity" label="Velocity" value={`${result.metrics.review_velocity_hours}h`} sublabel={result.metrics.review_velocity_active ? "ACTIVE" : "STALE"} />
-                <MetricTile testid="metric-floor" label="Price Floor" value={`$${result.metrics.price_floor}`} sublabel="New / L1" />
-                <MetricTile testid="metric-ceiling" label="Price Ceiling" value={`$${result.metrics.price_ceiling}`} sublabel="Top / Pro" />
-                <MetricTile testid="metric-pro" label="Fiverr Pro" value={`${result.metrics.pro_percentage}%`} sublabel={`${result.metrics.fiverr_pro_count} sellers`} />
+                <MetricTile testid="metric-saturation-index" label="Saturation Index"
+                  value={result.saturation_index}
+                  sublabel={result.saturation_index > 50 ? "HUNGRY" : "FED"}
+                  tone={result.saturation_index > 60 ? "gold" : undefined} />
+                <MetricTile testid="metric-promoted" label="Promoted CPA"
+                  value={`${result.promoted_cpa_pct}%`}
+                  sublabel={result.promoted_cpa_signal?.replace("_", " ")}
+                  tone={result.promoted_cpa_signal === "WIDE_OPEN" ? "gold" : (result.promoted_cpa_signal === "CROWDED" ? "danger" : undefined)} />
+                <MetricTile testid="metric-velocity-meta" label="Velocity"
+                  value={result.velocity_score}
+                  sublabel={`${result.metrics.reviews_last_7d} rev/7d`}
+                  tone={result.velocity_score > 50 ? "gold" : undefined} />
+                <MetricTile testid="metric-median" label="Median Price" value={`$${result.metrics.median_price}`}
+                  sublabel={result.metrics.price_inflation_pct != null ? `${result.metrics.price_inflation_pct >= 0 ? "+" : ""}${result.metrics.price_inflation_pct}% vs prior` : "no prior"}
+                  tone={(result.metrics.price_inflation_pct || 0) > 20 ? "gold" : undefined} />
+                <MetricTile testid="metric-ceiling" label="Top Decile" value={`$${result.metrics.top_decile_price}`}
+                  sublabel={result.high_ticket_vacuum ? "HIGH-TICKET VACUUM" : `${result.metrics.high_ticket_count} ≥$200 +queue`}
+                  tone={result.high_ticket_vacuum ? "gold" : undefined} />
               </div>
 
               {/* AI */}
