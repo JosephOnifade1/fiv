@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../AuthContext";
 import { Button } from "../components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { Check, Lightning, Crown, Spinner } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
@@ -49,10 +49,10 @@ export const PricingDialog = ({ open, onOpenChange, billing, onRefresh }) => {
           <DialogTitle className="text-3xl font-black tracking-tighter" style={{ fontFamily: "'Cabinet Grotesk', system-ui" }}>
             Choose your operator tier
           </DialogTitle>
-          <p className="text-xs font-mono text-zinc-500 mt-1">
+          <DialogDescription className="text-xs font-mono text-zinc-500 mt-1">
             {isAdmin ? "Admin override active. Unlimited access granted." :
               isPro ? "You're on Pro. Manage anytime." : "Upgrade to unlock the full 2026 algorithm signal."}
-          </p>
+          </DialogDescription>
         </DialogHeader>
 
         <div className="grid sm:grid-cols-2">

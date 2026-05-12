@@ -68,11 +68,11 @@ async def get_plan_status(user_doc: dict, jobs_col) -> dict:
     })
     return {
         "plan": "pro" if pro else "free",
-        "is_admin": ADMIN_EMAIL and user_doc.get("email", "").lower() == ADMIN_EMAIL,
+        "is_admin": bool(ADMIN_EMAIL and user_doc.get("email", "").lower() == ADMIN_EMAIL),
         "scans_used_this_month": scans_used,
         "free_limit": FREE_SCAN_LIMIT,
         "scans_remaining": max(0, FREE_SCAN_LIMIT - scans_used) if not pro else None,
-        "plan_expires_at": user_doc.get("plan_expires_at") if not is_pro(user_doc) or ADMIN_EMAIL == user_doc.get("email", "").lower() else user_doc.get("plan_expires_at"),
+        "plan_expires_at": user_doc.get("plan_expires_at"),
         "price_usd": PRO_PRICE_USD,
         "current_month": month,
     }
@@ -154,17 +154,24 @@ def make_billing_routes(users_col, payments_col, jobs_col):
         host_url = str(http_request.base_url).rstrip("/")
         webhook_url = f"{host_url}/api/webhook/stripe"
         stripe = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
-        st: CheckoutStatusResponse = await stripe.get_checkout_status(session_id)
-
-        new_status = st.status
-        new_payment_status = st.payment_status
-        update = {
-            "status": new_status,
-            "payment_status": new_payment_status,
-            "amount_total": st.amount_total,
-            "currency": st.currency,
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-        }
+        try:
+            st: CheckoutStatusResponse = await stripe.get_checkout_status(session_id)
+            new_status = st.status
+            new_payment_status = st.payment_status
+            update = {
+                "status": new_status,
+                "payment_status": new_payment_status,
+                "amount_total": st.amount_total,
+                "currency": st.currency,
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+            }
+        except Exception as e:
+            # emergentintegrations proxy-created sessions can't be retrieved via public Stripe API.
+            # Fall back to persisted state; webhook will eventually flip status to paid.
+            new_status = tx.get("status", "open")
+            new_payment_status = tx.get("payment_status", "pending")
+            update = {"checked_at": datetime.now(timezone.utc).isoformat(),
+                      "last_check_error": str(e)[:200]}
 
         plan_applied = bool(tx.get("plan_applied"))
         if new_payment_status == "paid" and not plan_applied:
