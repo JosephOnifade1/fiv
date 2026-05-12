@@ -1,0 +1,61 @@
+{
+  "theme": "Light",
+  "archetype": "4 (Swiss & High-Contrast)",
+  "color_palette": {
+    "background_primary": "#FFFFFF",
+    "background_secondary": "#F3F4F6",
+    "surface": "#FFFFFF",
+    "text_primary": "#09090B",
+    "text_secondary": "#52525B",
+    "border": "#E5E7EB",
+    "accent_primary": "#09090B",
+    "accent_gold": "#F59E0B",
+    "accent_signal_red": "#EF4444"
+  },
+  "typography": {
+    "heading_font": "Cabinet Grotesk",
+    "body_font": "IBM Plex Mono",
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl font-black tracking-tighter",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-semibold tracking-tight",
+      "body": "text-sm sm:text-base leading-relaxed",
+      "label": "text-xs uppercase tracking-[0.2em] font-semibold text-text-secondary"
+    }
+  },
+  "layout_spacing": {
+    "container_padding": "p-6 md:p-8 lg:p-12",
+    "gap": "gap-4 md:gap-6",
+    "grid_strategy": "Control Room Pattern. Strict hierarchy, dense data layout with 1px structural borders."
+  },
+  "components": {
+    "buttons": "Flat, sharp edges. No border-radius (rounded-none). bg-black text-white hover:bg-black/90 focus:ring-2 focus:ring-black/20 focus:outline-none.",
+    "cards": "border-collapse style. Flat surface, 1px border-border, no shadow. Active/High-Ratio states use 'Tracing Beam' effect with Gold.",
+    "inputs": "Shadcn based. Sharp edges (rounded-none), 1px borders, solid white bg. High contrast focus rings.",
+    "tables": "Sticky headers, alternating subtle zebra stripes (#FAFAFA), right-aligned numeric data. Monospace fonts for all table cells.",
+    "charts": "Recharts. Monochromatic lines (black/gray) with Gold and Red highlights for anomalies/thresholds."
+  },
+  "media": {
+    "login_background": "https://images.unsplash.com/photo-1778125756316-c387b9975b57?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODR8MHwxfHNlYXJjaHwxfHxtaW5pbWFsaXN0JTIwZ2VvbWV0cmljJTIwYWJzdHJhY3QlMjBwYXR0ZXJuJTIwbGlnaHR8ZW58MHx8fHwxNzc4NTU4MTQxfDA&ixlib=rb-4.1.0&q=85",
+    "ai_specialist_avatar": "https://images.unsplash.com/photo-1732020858816-93c130ab8f49?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzd8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBhdmF0YXIlMjBhYnN0cmFjdCUyMDNkJTIwcm9ib3R8ZW58MHx8fHwxNzc4NTU4MTQ1fDA&ixlib=rb-4.1.0&q=85",
+    "hero_fallback": "https://images.unsplash.com/photo-1776426128523-7729b721c524?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODR8MHwxfHNlYXJjaHwyfHxtaW5pbWFsaXN0JTIwZ2VvbWV0cmljJTIwYWJzdHJhY3QlMjBwYXR0ZXJuJTIwbGlnaHR8ZW58MHx8fHwxNzc4NTU4MTQxfDA&ixlib=rb-4.1.0&q=85"
+  },
+  "motion": {
+    "hover": "Subtle border color change. No floating or heavy shadows.",
+    "transitions": "transition-colors duration-200 ease-in-out",
+    "alerts": "Gold highlight pulse for >5 ratio. Smooth slide-in for AI insights."
+  },
+  "specific_instructions": [
+    "Use Phosphor Icons (yarn add @phosphor-icons/react) for dense, clean look.",
+    "Do NOT use HTML-based components for dropdowns or date pickers; ALWAYS use Shadcn with custom 0px radius styles.",
+    "Data grids must use IBM Plex Mono for all numbers to ensure tabular alignment.",
+    "Any gig with 'Competition-to-Order Ratio > 5' MUST have a stark gold border (border-amber-500) and background highlight (bg-amber-50).",
+    "The AI insight panel should use the AI avatar and have a distinct background tint (e.g., #FAFAFA) to separate it from data tables.",
+    "All interactive elements must have a data-testid attribute in kebab-case."
+  ],
+  "dependencies_to_install": [
+    "@phosphor-icons/react",
+    "recharts",
+    "framer-motion"
+  ]
+}
