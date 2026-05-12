@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 3: Tested Stripe Pro tier billing layer. Backend = 31/32 PASS (21 regression + 10/11 new billing). Critical bug found: GET /api/billing/status/{session_id} returns 500 because emergentintegrations.StripeCheckout.get_checkout_status() raises CheckoutError (Stripe responds 'No such checkout.session' — sessions created via /v1/checkout/sessions on the Emergent proxy are NOT retrievable by the stripe SDK's Session.retrieve in the same code path). All other billing pieces verified: /api/billing/me returns correct shape (plan, is_admin, scans_used_this_month, free_limit, scans_remaining, plan_expires_at, price_usd, current_month); demo shows plan='free', is_admin=False, scans_remaining=int; admin (onifadejosp@gmail.com, JWT-injected) shows plan='pro', is_admin=True, scans_remaining=null; POST /api/billing/checkout returns {url containing 'checkout.stripe.com', session_id} and persists fs_payments record with status='initiated', payment_status='pending', amount=29.0; invalid package_id → 400; POST /api/scrape/search for over-limit free demo → 402 with detail.code='PAYMENT_REQUIRED' and limit=5; admin scan with 8 seeded scans this month → 200 (admin override works); fresh user under-limit → 200; /api/webhook/stripe accepts POST and returns 400 for invalid signature (endpoint exists). Frontend: PlanBadge renders 'FREE · 8/5' for over-limit demo, click opens [data-testid=pricing-dialog] with [data-testid=plan-free], [data-testid=plan-pro], [data-testid=upgrade-btn] all present and Pro tier showing $29/month — visually clean. NOTE for next agent: demo user accumulated 8 real scans across iterations 1-3 in fs_jobs collection, so existing /app/backend/tests/test_backend.py 21-test regression FAILS unless demo is temporarily promoted to pro (set plan='pro' + plan_expires_at future); when temporarily promoted I confirmed all 21 regression tests still pass — billing did NOT break any existing endpoint logic. Reverted demo back to free to preserve spec scenario.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "/api/billing/status/{session_id}", "issue": "Returns 500 (uncaught CheckoutError) when polling status of a session that was just created via /api/billing/checkout. Root cause: emergentintegrations creates session through https://integrations.emergentagent.com/stripe/v1/checkout/sessions (returns cs_test_...), but get_checkout_status calls stripe.checkout.Session.retrieve which goes to the public Stripe API and returns 404 'No such checkout.session'. Frontend useBilling hook polls this endpoint on ?session_id= URL — will surface 500s to user. Fix: wrap StripeCheckout.get_checkout_status in try/except in billing.py /status/{sid} and return {payment_status: 'pending', status: 'open', plan_applied: false} on CheckoutError, OR configure StripeCheckout to also retrieve via the emergent proxy.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "/api/billing/me", "issue": "is_admin field returned as truthy string when ADMIN_EMAIL is set (Python short-circuit: `ADMIN_EMAIL and ...` returns the string itself when False side, or boolean True). Currently tests treat as truthy but for clean API contract, wrap in bool() in get_plan_status. Minor — frontend coerces to bool anyway."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Post-checkout return to dashboard with ?session_id=", "issue": "useBilling hook polls /billing/status/{sid} which currently 500s — user returning from Stripe will see error toasts and plan will never be marked applied even after successful payment. Depends on backend critical bug above.", "affected_selectors": ["[data-testid='plan-badge']"]}
+    ],
+    "design_issues": [
+      {"screen": "PricingDialog", "issues": ["Console warning: 'Missing Description or aria-describedby={undefined} for {DialogContent}' — add DialogDescription for a11y compliance"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_billing.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/billing_results.xml",
+    "/app/test_reports/pytest/regression_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: In /app/backend/billing.py /api/billing/status/{sid}, wrap stripe.get_checkout_status() in try/except CheckoutError and return graceful pending status instead of letting 500 propagate. This blocks the post-payment redirect UX.",
+    "Add DialogDescription to PricingDialog in /app/frontend/src/components/Billing.jsx for a11y (silences React warning).",
+    "Update /app/backend/tests/test_backend.py 21-test regression to use a fresh per-run TEST_ user (or admin JWT) instead of the shared demo user — currently demo is intentionally over-limit per spec, so all scrape-dependent tests will 402. Suggestion: add a module-level fixture that registers TEST_<uuid>@example.com and yields its token.",
+    "Optional: wrap is_admin in bool() in billing.get_plan_status to return strict True/False rather than the string ADMIN_EMAIL on the truthy branch."
+  ],
+  "critical_code_review_comments": [
+    "billing.py get_plan_status returns `is_admin = ADMIN_EMAIL and ...` — when admin matches, returns the email string (truthy) not True. Use bool() wrapper.",
+    "billing.py /status/{sid} swallowing no exceptions — must defensively handle Stripe SDK errors so a flaky Stripe call doesn't 500 user UX.",
+    "billing.py PACKAGES['pro_monthly']['duration_days'] = 30 — for a $29/month plan this is fine, but consider documenting that it's a flat 30 days vs calendar month renewal.",
+    "webhook handler does not verify that the package_id in fs_payments matches a known PACKAGE before granting plan — minor; metadata is server-controlled so fine.",
+    "test_backend.py 21 tests now share state with demo user's free-limit; should be migrated to per-test-run isolation."
+  ],
+  "updated_files": ["/app/backend/tests/test_billing.py"],
+  "success_rate": {"backend": "97% (31/32)", "frontend": "95% (over-limit + PlanBadge + PricingDialog verified)"},
+  "test_credentials": "demo@fiverrscout.example.com / Demo1234! (FREE plan, ~8 scans this month — over the 5 limit). Admin: onifadejosp@gmail.com via JWT signed with JWT_SECRET=fiverr_scout_jwt_secret_2026_change_me_in_prod (HS256, sub=b8ad2ae8-cf42-4dc4-9c5a-f5cfa8ba5087).",
+  "seed_data_creation": "Inserted/cleaned TEST_SEED_* fs_jobs records during test; created/deleted a TEST_under_<uuid>@example.com user. One fs_payments record (status=initiated) remains in DB from the successful checkout creation test — non-destructive.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "1) /api/billing/status/{sid} ALWAYS 500s currently due to Stripe retrieve mismatch — main agent must add try/except in billing.py before retest. 2) Demo user is intentionally over-limit (8 scans in fs_jobs this month) — for any test that needs demo to scan successfully, either delete demo's fs_jobs for current month OR promote to pro temporarily OR (preferred) use a fresh per-test user. I verified that temporarily setting demo to pro lets all 21 regression tests pass, so billing did not regress any existing API. 3) Use the JWT-direct admin auth approach in /app/backend/tests/test_billing.py for any admin-side tests. 4) Frontend PlanBadge + PricingDialog testids all wired correctly. 5) Backend collection is fs_jobs (not fs_scrape_jobs).",
+  "rca_of_the_issue": "Stripe status 500: The emergentintegrations Stripe wrapper creates sessions through an Emergent proxy URL (https://integrations.emergentagent.com/stripe/v1/checkout/sessions) but the get_checkout_status method calls the public Stripe SDK's Session.retrieve which hits api.stripe.com directly with sk_test_emergent — the public API has no record of those proxy-created sessions, returning 404 'No such checkout.session'. The CheckoutError this raises is not caught in billing.py /status/{sid}, propagating as a 500 to the client. Mitigation: catch CheckoutError and return the persisted DB state as pending; or escalate to provider so retrieve also routes via proxy."
+}

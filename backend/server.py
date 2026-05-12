@@ -27,6 +27,7 @@ from ai_insights import (
     expand_keywords, summarize_report, suggest_pivots,
     trend_verdict_2026, proximity_map,
 )
+from billing import make_billing_routes, assert_can_scan
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger("fiverr-scout")
@@ -39,6 +40,7 @@ users_col = db.fs_users
 jobs_col = db.fs_jobs
 watch_col = db.fs_watchlist
 trend_col = db.fs_trends
+payments_col = db.fs_payments
 
 app = FastAPI(title="Fiverr Niche Arbitrage Scout")
 api = APIRouter(prefix="/api")
@@ -166,6 +168,12 @@ async def _run_scrape(job_id: str, keyword: str, user_id: str):
 
 @api.post("/scrape/search")
 async def start_search(body: SearchIn, bg: BackgroundTasks, user=Depends(get_current_user)):
+    # Plan enforcement
+    user_doc = await users_col.find_one({"id": user["id"]}, {"_id": 0})
+    if not user_doc:
+        raise HTTPException(404, "User not found")
+    await assert_can_scan(user_doc, jobs_col)
+
     job_id = str(uuid.uuid4())
     doc = {
         "id": job_id,
@@ -405,6 +413,9 @@ async def root():
 
 
 app.include_router(api)
+billing_router, webhook_router = make_billing_routes(users_col, payments_col, jobs_col)
+app.include_router(billing_router)
+app.include_router(webhook_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,

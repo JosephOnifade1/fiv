@@ -11,12 +11,14 @@ import { GigTable } from "../components/GigTable";
 import { AIPanel } from "../components/AIPanel";
 import { TopFocusKeywords } from "../components/TopFocusKeywords";
 import { SearchBar } from "../components/SearchBar";
+import { PlanBadge, useBilling } from "../components/Billing";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 
 export default function Dashboard() {
   const { user, logout, authAxios } = useAuth();
+  const { billing, refresh: refreshBilling, openPricing, PricingMount } = useBilling();
   const [keyword, setKeyword] = useState("");
   const [activeJob, setActiveJob] = useState(null);
   const [polling, setPolling] = useState(false);
@@ -58,9 +60,15 @@ export default function Dashboard() {
       const jobId = r.data.job_id;
       setActiveJob({ id: jobId, keyword: term, status: "running", result: null });
       pollJob(jobId);
-    } catch {
-      toast.error("Failed to start scrape");
+      refreshBilling();
+    } catch (err) {
       setPolling(false);
+      if (err?.response?.status === 402) {
+        toast.error("Free plan limit reached. Upgrade to Pro for unlimited scans.");
+        openPricing();
+      } else {
+        toast.error("Failed to start scrape");
+      }
     }
   };
 
@@ -138,7 +146,8 @@ export default function Dashboard() {
               Niche Arbitrage Terminal
             </span>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <PlanBadge billing={billing} onOpen={openPricing} />
             <span className="text-xs font-mono text-zinc-500 hidden sm:inline" data-testid="user-email">{user?.email}</span>
             <button onClick={logout} data-testid="logout-btn"
               className="text-xs font-mono uppercase tracking-[0.2em] text-zinc-600 hover:text-black flex items-center gap-1">
@@ -345,6 +354,8 @@ export default function Dashboard() {
           )}
         </main>
       </div>
+
+      {PricingMount}
     </div>
   );
 }
