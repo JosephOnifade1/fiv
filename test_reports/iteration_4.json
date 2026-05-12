@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 4 — Live niche pipeline + Referral system tested end-to-end. Backend NEW: 17/17 PASS (11 live pipeline + 6 referral). Backend REGRESSION: 22/32 PASS — the 10 failures are NOT new regressions; they cascade from the same iter3-documented issue where demo user is over the 5/month free quota (test_07 returns 402 then state['job_id']/state['keyword'] never get populated, breaking all dependent tests). Iteration 4 features verified end-to-end: POST /api/scan returns {task_id, status:'queued', keyword}; background worker upserts market_insights (calling /scan twice with same keyword keeps a single doc and increments scan_count from N→N+1); GET /api/scan/{tid} transitions queued→running→complete with score & is_gold; GET /api/niches returns {count, items[]} with all expected fields (keyword, display_keyword, total_gigs, avg_orders_in_queue, score, is_gold, last_scanned, snapshot, status) sorted by score DESC; gold logic verified item-by-item (total<500 AND avg>8); only_gold=true filter works; deterministic seed 'agentic AI workflow design' produces is_gold=true (198 gigs, 11.1 q, score=56); admin bypasses 5/month limit; fresh free user gets 402 after 5 scans; /api/scan/{bad_id}→404. Referrals: code shape FS-XXXXXXXX with share_url='/?ref=...'; deterministic per email (two calls return same code); self-redeem→400; invalid code→404; double-redeem→400; successful redeem returns {granted_days:30, new_plan_expires_at}, flips BOTH redeemer & referrer to plan='pro' via /api/billing/me. Frontend: LiveNicheBoard [data-testid='live-niche-board'] renders with 9 rows (6 GOLD, sorted by score DESC), [data-testid='board-gold-toggle'] and [data-testid='board-refresh'] clickable; [data-testid='open-referral-btn'] opens [data-testid='referral-dialog'] showing [data-testid='referral-code']='FS-FB677873', redeem input + redeem-btn present. Clicking SCAN fires BOTH POST /api/scan AND POST /api/scrape/search, polls GET /api/niches, and renders the full scan result panel (Opportunity Score 98, GOLD ratio 5.61, Velocity 100, Momentum Gap + High-Ticket Vacuum flags).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/scan", "issue": "/api/scan mirrors into fs_jobs as a stub for quota counting — this means a single user-initiated keyword scan increments scans_used_this_month by 2 (one from /scan stub + one from /scrape/search). Confirmed via UI: PlanBadge jumped from 0/5 to 2/5 after one SCAN. Likely intentional but worth confirming product spec; if not, the stub fs_jobs row in live_pipeline.py:128-135 should skip or use a different collection."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_live_pipeline.py",
+    "/app/backend/tests/test_referrals.py",
+    "/app/test_reports/pytest/iter4_results.xml",
+    "/app/test_reports/pytest/iter4_regression.xml"
+  ],
+  "action_items": [
+    "Decide on the double-quota-charge in /api/scan stub fs_jobs insert: currently one user-initiated scan from the Dashboard burns 2 of 5 free scans because Dashboard.startSearch fires both /scan AND /scrape/search and both write to fs_jobs. If the intent was 'either endpoint counts once', remove the fs_jobs.insert_one() in live_pipeline.py:128-135 OR have Dashboard call only ONE endpoint.",
+    "(Carried over from iter3) Update /app/backend/tests/test_backend.py to use a fresh TEST_ user per run rather than the shared demo user — 10 tests fail today because demo is intentionally over the free limit. New /app/backend/tests/test_live_pipeline.py and test_referrals.py already follow this pattern and are clean.",
+    "(Carried over from iter3) Stripe /api/billing/status/{sid} now wraps emergentintegrations call in try/except — confirmed fix is live in billing.py and no 500s observed."
+  ],
+  "critical_code_review_comments": [
+    "live_pipeline.py /api/scan double-writes (market_insights upsert + fs_jobs.insert_one) — works, but the fs_jobs stub is conceptually a quota meter and makes user appear to consume 2 scans for one UI 'Scan' click (Dashboard.jsx:64-66 hits both endpoints). Either consolidate or document.",
+    "live_pipeline.py compute_live_score divides by total_gigs/100 — for very small total_gigs (e.g., 10), this inflates score; min(100, raw*10) caps it but the curve is steep. Acceptable for now since simulator total is always ≥80.",
+    "live_pipeline.py run_deep_scan catches Exception broadly — fine for resiliency; consider logging the traceback so failed tasks can be debugged.",
+    "referral redeem: uses datetime.fromisoformat() without tz handling — if user has a naive plan_expires_at stored, comparing with tz-aware datetime.now(timezone.utc) will raise TypeError; caught by broad except but base falls back to now, silently losing remaining days. Minor edge."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_live_pipeline.py",
+    "/app/backend/tests/test_referrals.py"
+  ],
+  "success_rate": {"backend": "new: 17/17 (100%); full regression: 39/49 (80%) — 10 failures are pre-existing demo-quota cascade, not iter4 regressions", "frontend": "100% — all data-testids wired, both /scan and /scrape/search fire on click, board polls /niches, referral dialog renders FS- code"},
+  "test_credentials": "Created TEST_live_<uuid>@example.com, TEST_ref_<uuid>@example.com, TEST_ui_<uuid>@example.com via /api/auth/register during tests. Admin JWT signed in-test with JWT_SECRET=fiverr_scout_jwt_secret_2026_change_me_in_prod, sub=b8ad2ae8-cf42-4dc4-9c5a-f5cfa8ba5087.",
+  "seed_data_creation": "Inserted ~10 market_insights docs (agentic AI workflow design, linkedin ghostwriting saas premium, notion template marketplace agency, fresh scan 0-5 *, admin probe *). Multiple fs_scan_tasks rows. ~3 fs_referrals rows from successful redeem tests. All test users prefixed TEST_ for easy cleanup.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "1) Iter4 live pipeline + referrals fully working and tested — no critical bugs. 2) Only open question: should one UI 'Scan' burn 1 or 2 free-quota counts (currently 2 because both /scan and /scrape/search insert into fs_jobs). 3) Demo user is still over-limit from iter1-3 carryover (~10+ scans this month); /app/backend/tests/test_backend.py shared-state regression will keep failing 10 tests until a fresh-user fixture is added. 4) /api/billing/status/{sid} is now safely wrapped in try/except (iter3 fix confirmed). 5) For deterministic gold-keyword tests, use 'agentic AI workflow design' (4-word, simulator produces ~198 gigs and ~11 avg orders -> is_gold=true).",
+  "rca_of_the_issue": "test_backend.py 10 failures: shared module-level state dict relies on test_07_scrape_search_with_2026_fields succeeding, but demo@fiverrscout.example.com has 8+ fs_jobs in current month → /api/scrape/search returns 402 PAYMENT_REQUIRED → state['job_id'] never set → all dependent tests KeyError. This is the same iter3-documented issue, not introduced by iter4. Mitigation: refactor test_backend.py to use a TEST_<uuid> registration per session (the new test_live_pipeline.py and test_referrals.py demonstrate the pattern)."
+}

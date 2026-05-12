@@ -28,6 +28,7 @@ from ai_insights import (
     trend_verdict_2026, proximity_map,
 )
 from billing import make_billing_routes, assert_can_scan
+from live_pipeline import make_live_routes
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger("fiverr-scout")
@@ -41,6 +42,9 @@ jobs_col = db.fs_jobs
 watch_col = db.fs_watchlist
 trend_col = db.fs_trends
 payments_col = db.fs_payments
+market_col = db.market_insights
+tasks_col = db.fs_scan_tasks
+referral_col = db.fs_referrals
 
 app = FastAPI(title="Fiverr Niche Arbitrage Scout")
 api = APIRouter(prefix="/api")
@@ -416,6 +420,9 @@ app.include_router(api)
 billing_router, webhook_router = make_billing_routes(users_col, payments_col, jobs_col)
 app.include_router(billing_router)
 app.include_router(webhook_router)
+niches_router, referral_router = make_live_routes(users_col, jobs_col, market_col, tasks_col, referral_col)
+app.include_router(niches_router)
+app.include_router(referral_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,

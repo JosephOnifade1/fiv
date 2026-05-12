@@ -12,6 +12,9 @@ import { AIPanel } from "../components/AIPanel";
 import { TopFocusKeywords } from "../components/TopFocusKeywords";
 import { SearchBar } from "../components/SearchBar";
 import { PlanBadge, useBilling } from "../components/Billing";
+import { LiveNicheBoard } from "../components/LiveNicheBoard";
+import { ReferralDialog } from "../components/ReferralDialog";
+import { Gift } from "@phosphor-icons/react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -20,6 +23,7 @@ export default function Dashboard() {
   const { user, logout, authAxios } = useAuth();
   const { billing, refresh: refreshBilling, openPricing, PricingMount } = useBilling();
   const [keyword, setKeyword] = useState("");
+  const [referralOpen, setReferralOpen] = useState(false);
   const [activeJob, setActiveJob] = useState(null);
   const [polling, setPolling] = useState(false);
   const [history, setHistory] = useState([]);
@@ -56,6 +60,9 @@ export default function Dashboard() {
     setKeyword(term);
     setPolling(true);
     try {
+      // Trigger the live pipeline (upserts market_insights)
+      authAxios.post("/scan", { keyword: term }).catch(() => {});
+      // Plus the rich job for the detailed result panes
       const r = await authAxios.post("/scrape/search", { keyword: term });
       const jobId = r.data.job_id;
       setActiveJob({ id: jobId, keyword: term, status: "running", result: null });
@@ -147,6 +154,14 @@ export default function Dashboard() {
             </span>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              data-testid="open-referral-btn"
+              onClick={() => setReferralOpen(true)}
+              title="Refer a friend, get 1 month free"
+              className="text-[10px] uppercase tracking-[0.2em] font-mono px-3 py-1.5 border border-zinc-300 bg-white hover:bg-black hover:text-white transition-colors flex items-center gap-1"
+            >
+              <Gift size={11} weight="bold" /> Refer
+            </button>
             <PlanBadge billing={billing} onOpen={openPricing} />
             <span className="text-xs font-mono text-zinc-500 hidden sm:inline" data-testid="user-email">{user?.email}</span>
             <button onClick={logout} data-testid="logout-btn"
@@ -217,6 +232,9 @@ export default function Dashboard() {
         <main className="p-6 lg:p-8 space-y-6 max-w-[1600px]">
           {/* Search */}
           <SearchBar value={keyword} onChange={setKeyword} onSubmit={startSearch} busy={polling} authAxios={authAxios} />
+
+          {/* Live niche board — always visible, polls every 10s while a scan is active */}
+          <LiveNicheBoard activeTaskId={polling ? (activeJob?.id || "pending") : null} onPick={startSearch} />
 
           {!result && !polling && (
             <>
@@ -356,6 +374,7 @@ export default function Dashboard() {
       </div>
 
       {PricingMount}
+      <ReferralDialog open={referralOpen} onOpenChange={setReferralOpen} onRedeemSuccess={refreshBilling} />
     </div>
   );
 }

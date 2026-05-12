@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="10" skipped="0" tests="32" time="9.796" timestamp="2026-05-12T05:33:53.718090+00:00" hostname="agent-env-dacb7534-34a0-4565-b9a4-f2ccd0e73ee1"><testcase classname="tests.test_backend" name="test_01_health" time="0.110" /><testcase classname="tests.test_backend" name="test_02_register_or_login" time="0.375" /><testcase classname="tests.test_backend" name="test_03_me" time="0.158" /><testcase classname="tests.test_backend" name="test_04_protected_without_token" time="0.102" /><testcase classname="tests.test_backend" name="test_05_register_duplicate" time="0.049" /><testcase classname="tests.test_backend" name="test_06_login_bad_password" time="0.272" /><testcase classname="tests.test_backend" name="test_07_scrape_search_with_2026_fields" time="0.166"><failure message="AssertionError: {&quot;detail&quot;:{&quot;message&quot;:&quot;Free plan limit reached (5/month). Upgrade to Pro for unlimited scans.&quot;,&quot;code&quot;:&quot;PAYMENT_REQUIRED&quot;,&quot;scans_used&quot;:8,&quot;limit&quot;:5}}&#10;assert 402 == 200&#10; +  where 402 = &lt;Response [402]&gt;.status_code">tests/test_backend.py:76: in test_07_scrape_search_with_2026_fields
+    assert r.status_code == 200, r.text
+E   AssertionError: {"detail":{"message":"Free plan limit reached (5/month). Upgrade to Pro for unlimited scans.","code":"PAYMENT_REQUIRED","scans_used":8,"limit":5}}
+E   assert 402 == 200
+E    +  where 402 = &lt;Response [402]&gt;.status_code</failure></testcase><testcase classname="tests.test_backend" name="test_08_jobs_list" time="0.110"><failure message="KeyError: 'job_id'">tests/test_backend.py:125: in test_08_jobs_list
+    assert any(it["id"] == state["job_id"] for it in items)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_backend.py:125: in &lt;genexpr&gt;
+    assert any(it["id"] == state["job_id"] for it in items)
+                           ^^^^^^^^^^^^^^^
+E   KeyError: 'job_id'</failure></testcase><testcase classname="tests.test_backend" name="test_09_export_csv_has_favourites" time="0.000"><failure message="KeyError: 'job_id'">tests/test_backend.py:129: in test_09_export_csv_has_favourites
+    r = requests.get(f"{API}/scrape/jobs/{state['job_id']}/export?format=csv", headers=auth_header())
+                                          ^^^^^^^^^^^^^^^
+E   KeyError: 'job_id'</failure></testcase><testcase classname="tests.test_backend" name="test_10_export_json" time="0.001"><failure message="KeyError: 'job_id'">tests/test_backend.py:140: in test_10_export_json
+    r = requests.get(f"{API}/scrape/jobs/{state['job_id']}/export?format=json", headers=auth_header())
+                                          ^^^^^^^^^^^^^^^
+E   KeyError: 'job_id'</failure></testcase><testcase classname="tests.test_backend" name="test_11_watchlist_crud" time="0.000"><failure message="KeyError: 'keyword'">tests/test_backend.py:148: in test_11_watchlist_crud
+    r = requests.post(f"{API}/watchlist", json={"keyword": state["keyword"], "note": "test"}, headers=auth_header())
+                                                           ^^^^^^^^^^^^^^^^
+E   KeyError: 'keyword'</failure></testcase><testcase classname="tests.test_backend" name="test_12_trends_has_median_and_saturation" time="0.000"><failure message="KeyError: 'keyword'">tests/test_backend.py:161: in test_12_trends_has_median_and_saturation
+    r = requests.get(f"{API}/trends/{state['keyword']}", headers=auth_header())
+                                     ^^^^^^^^^^^^^^^^
+E   KeyError: 'keyword'</failure></testcase><testcase classname="tests.test_backend" name="test_13_focus_keywords_sorts" time="0.419" /><testcase classname="tests.test_backend" name="test_14_autocomplete_valid_query" time="0.305" /><testcase classname="tests.test_backend" name="test_15_autocomplete_short_query_skip" time="0.131" /><testcase classname="tests.test_backend" name="test_16_autocomplete_requires_auth" time="0.118" /><testcase classname="tests.test_backend" name="test_17_ai_trend_verdict" time="0.000"><failure message="KeyError: 'job_id'">tests/test_backend.py:207: in test_17_ai_trend_verdict
+    r = requests.post(f"{API}/ai/trend-verdict", json={"job_id": state["job_id"]}, headers=auth_header(), timeout=90)
+                                                                 ^^^^^^^^^^^^^^^
+E   KeyError: 'job_id'</failure></testcase><testcase classname="tests.test_backend" name="test_18_ai_proximity" time="0.001"><failure message="KeyError: 'job_id'">tests/test_backend.py:219: in test_18_ai_proximity
+    , json={"job_id": state["job_id"]}, headers=auth_header(), timeout=90)
+                      ^^^^^^^^^^^^^^^
+E   KeyError: 'job_id'</failure></testcase><testcase classname="tests.test_backend" name="test_19_ai_trend_verdict_bad_job" time="0.107" /><testcase classname="tests.test_backend" name="test_20_ai_summarize_existing" time="0.000"><failure message="KeyError: 'job_id'">tests/test_backend.py:235: in test_20_ai_summarize_existing
+    r = requests.post(f"{API}/ai/summarize", json={"job_id": state["job_id"]}, headers=auth_header(), timeout=60)
+                                                             ^^^^^^^^^^^^^^^
+E   KeyError: 'job_id'</failure></testcase><testcase classname="tests.test_backend" name="test_21_price_inflation_after_second_scan" time="0.000"><failure message="KeyError: 'keyword'">tests/test_backend.py:243: in test_21_price_inflation_after_second_scan
+    r = requests.post(f"{API}/scrape/search", json={"keyword": state["keyword"]}, headers=auth_header())
+                                                               ^^^^^^^^^^^^^^^^
+E   KeyError: 'keyword'</failure></testcase><testcase classname="tests.test_billing" name="test_billing_me_demo_free" time="0.473" /><testcase classname="tests.test_billing" name="test_billing_me_admin_pro_unlimited" time="0.196" /><testcase classname="tests.test_billing" name="test_billing_me_requires_auth" time="0.116" /><testcase classname="tests.test_billing" name="test_checkout_creates_stripe_session" time="0.772" /><testcase classname="tests.test_billing" name="test_checkout_invalid_package" time="0.101" /><testcase classname="tests.test_billing" name="test_billing_status_pending" time="0.292" /><testcase classname="tests.test_billing" name="test_billing_status_not_found" time="0.109" /><testcase classname="tests.test_billing" name="test_webhook_endpoint_exists" time="0.117" /><testcase classname="tests.test_billing" name="test_scan_402_when_free_over_limit" time="0.355" /><testcase classname="tests.test_billing" name="test_scan_admin_unlimited" time="2.115" /><testcase classname="tests.test_billing" name="test_scan_free_under_limit_fresh_user" time="2.509" /></testsuite></testsuites>
