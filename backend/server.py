@@ -29,6 +29,7 @@ from ai_insights import (
 )
 from billing import make_billing_routes, assert_can_scan
 from live_pipeline import make_live_routes
+from gig_builder import make_gig_routes
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger("fiverr-scout")
@@ -423,6 +424,7 @@ app.include_router(webhook_router)
 niches_router, referral_router = make_live_routes(users_col, jobs_col, market_col, tasks_col, referral_col)
 app.include_router(niches_router)
 app.include_router(referral_router)
+app.include_router(make_gig_routes(users_col, jobs_col, db.fs_gig_setups))
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,

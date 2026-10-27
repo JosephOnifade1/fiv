@@ -1,9 +1,9 @@
 import React, { useState } from "react";
-import { Sparkle, Robot, ArrowsHorizontal, ArrowRight, Compass, Graph } from "@phosphor-icons/react";
+import { Sparkle, Robot, ArrowsHorizontal, ArrowRight, Compass, Graph, Hammer } from "@phosphor-icons/react";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 
-export const AIPanel = ({ job, authAxios, onPickKeyword }) => {
+export const AIPanel = ({ job, authAxios, onPickKeyword, onBuildGig, gigBusy }) => {
   const [summary, setSummary] = useState(null);
   const [pivots, setPivots] = useState(null);
   const [expansions, setExpansions] = useState(null);
@@ -50,6 +50,10 @@ export const AIPanel = ({ job, authAxios, onPickKeyword }) => {
           <div className="text-[10px] uppercase tracking-[0.3em] font-mono text-zinc-500">AI Niche Arbitrage Specialist</div>
           <div className="text-sm font-bold" style={{ fontFamily: "'Cabinet Grotesk', system-ui" }}>Gemini 3 Flash · 2026 reverse-engineering mode</div>
         </div>
+        <button data-testid="ai-build-gig-btn" onClick={onBuildGig} disabled={gigBusy}
+          className="ml-auto flex items-center gap-1 bg-amber-500 hover:bg-black text-white px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] transition-colors disabled:opacity-50">
+          <Hammer size={11} weight="bold" /> Build Gig
+        </button>
       </div>
 
       <div className="p-5 space-y-5">

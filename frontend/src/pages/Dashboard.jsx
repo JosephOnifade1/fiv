@@ -14,7 +14,9 @@ import { SearchBar } from "../components/SearchBar";
 import { PlanBadge, useBilling } from "../components/Billing";
 import { LiveNicheBoard } from "../components/LiveNicheBoard";
 import { ReferralDialog } from "../components/ReferralDialog";
-import { Gift } from "@phosphor-icons/react";
+import { Gift, Hammer, Stack } from "@phosphor-icons/react";
+import { GigBuilder } from "../components/GigBuilder";
+import { GigSetupsDialog } from "../components/GigSetupsDialog";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -29,6 +31,25 @@ export default function Dashboard() {
   const [history, setHistory] = useState([]);
   const [watchlist, setWatchlist] = useState([]);
   const [trendData, setTrendData] = useState([]);
+  const [gigSetupId, setGigSetupId] = useState(null);
+  const [gigListOpen, setGigListOpen] = useState(false);
+  const [gigBusy, setGigBusy] = useState(false);
+
+  const buildGig = async (payload) => {
+    setGigBusy(true);
+    try {
+      const r = await authAxios.post("/gigs/build", payload);
+      setGigSetupId(r.data.id);
+    } catch (err) {
+      if (err?.response?.data?.detail?.code === "SCAN_REQUIRED") {
+        toast.error("Scan this keyword first", {
+          action: { label: "Scan now", onClick: () => startSearch(payload.keyword) },
+        });
+      } else {
+        toast.error("Could not start the gig builder");
+      }
+    } finally { setGigBusy(false); }
+  };
 
   const refreshHistory = useCallback(async () => {
     const r = await authAxios.get("/scrape/jobs");
@@ -162,6 +183,13 @@ export default function Dashboard() {
             >
               <Gift size={11} weight="bold" /> Refer
             </button>
+            <button
+              data-testid="open-gig-setups-btn"
+              onClick={() => setGigListOpen(true)}
+              className="text-[10px] uppercase tracking-[0.2em] font-mono px-3 py-1.5 border border-zinc-300 bg-white hover:bg-black hover:text-white transition-colors flex items-center gap-1"
+            >
+              <Stack size={11} weight="bold" /> My Gigs
+            </button>
             <PlanBadge billing={billing} onOpen={openPricing} />
             <span className="text-xs font-mono text-zinc-500 hidden sm:inline" data-testid="user-email">{user?.email}</span>
             <button onClick={logout} data-testid="logout-btn"
@@ -234,7 +262,8 @@ export default function Dashboard() {
           <SearchBar value={keyword} onChange={setKeyword} onSubmit={startSearch} busy={polling} authAxios={authAxios} />
 
           {/* Live niche board — always visible, polls every 10s while a scan is active */}
-          <LiveNicheBoard activeTaskId={polling ? (activeJob?.id || "pending") : null} onPick={startSearch} />
+          <LiveNicheBoard activeTaskId={polling ? (activeJob?.id || "pending") : null} onPick={startSearch}
+            onBuild={(kw) => buildGig({ keyword: kw })} />
 
           {!result && !polling && (
             <>
@@ -271,6 +300,10 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="flex gap-2">
+                  <Button onClick={() => buildGig({ job_id: activeJob.id })} disabled={gigBusy} data-testid="build-gig-btn"
+                    className="rounded-none bg-amber-500 hover:bg-black text-white font-mono text-xs uppercase tracking-[0.15em] h-9">
+                    <Hammer size={12} weight="bold" className="mr-1" /> {gigBusy ? "Starting…" : "Build Gig"}
+                  </Button>
                   <Button onClick={addWatch} data-testid="add-watchlist-btn"
                     className="rounded-none bg-white hover:bg-zinc-100 text-black border border-zinc-300 font-mono text-xs uppercase tracking-[0.15em] h-9">
                     <BookmarkSimple size={12} weight="bold" className="mr-1" /> Watch
@@ -319,7 +352,8 @@ export default function Dashboard() {
               </div>
 
               {/* AI */}
-              <AIPanel job={activeJob} authAxios={authAxios} onPickKeyword={startSearch} />
+              <AIPanel job={activeJob} authAxios={authAxios} onPickKeyword={startSearch}
+                onBuildGig={() => buildGig({ job_id: activeJob.id })} gigBusy={gigBusy} />
 
               {/* Top focus keywords across all scans */}
               <TopFocusKeywords authAxios={authAxios} onPick={startSearch} refreshKey={history.length} />
@@ -374,6 +408,12 @@ export default function Dashboard() {
       </div>
 
       {PricingMount}
+      <GigSetupsDialog open={gigListOpen} onOpenChange={setGigListOpen}
+        onOpenSetup={(id) => { setGigListOpen(false); setGigSetupId(id); }} />
+      {gigSetupId && (
+        <GigBuilder key={gigSetupId} setupId={gigSetupId} onClose={() => setGigSetupId(null)} onUpgrade={openPricing}
+          onRescan={(kw) => { setGigSetupId(null); startSearch(kw); }} />
+      )}
       <ReferralDialog open={referralOpen} onOpenChange={setReferralOpen} onRedeemSuccess={refreshBilling} />
     </div>
   );

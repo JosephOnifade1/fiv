@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../AuthContext";
 import { useInterval } from "../hooks/useInterval";
-import { Pulse, Crown, ArrowsClockwise, Lightning } from "@phosphor-icons/react";
+import { Pulse, Crown, ArrowsClockwise, Lightning, Hammer } from "@phosphor-icons/react";
 
 const fmtAgo = (iso) => {
   if (!iso) return "—";
@@ -13,7 +13,7 @@ const fmtAgo = (iso) => {
   } catch { return "—"; }
 };
 
-export const LiveNicheBoard = ({ activeTaskId, onPick }) => {
+export const LiveNicheBoard = ({ activeTaskId, onPick, onBuild }) => {
   const { authAxios } = useAuth();
   const [niches, setNiches] = useState([]);
   const [onlyGold, setOnlyGold] = useState(false);
@@ -98,11 +98,13 @@ export const LiveNicheBoard = ({ activeTaskId, onPick }) => {
             const flash = flashIds.has(n.keyword);
             const scanning = n.status === "scanning";
             return (
-              <button
+              <div
                 key={n.keyword}
+                role="button"
+                tabIndex={0}
                 data-testid={`niche-row-${n.keyword}`}
                 onClick={() => onPick(n.display_keyword || n.keyword)}
-                className={`w-full text-left flex items-center gap-3 px-5 py-3 transition-colors ${
+                className={`w-full text-left flex items-center gap-3 px-5 py-3 transition-colors cursor-pointer ${
                   flash ? "bg-amber-50" : "hover:bg-zinc-50"
                 } ${n.is_gold ? "border-l-2 border-amber-500" : "border-l-2 border-transparent"}`}
               >
@@ -129,10 +131,18 @@ export const LiveNicheBoard = ({ activeTaskId, onPick }) => {
                       <span className="text-base font-black tracking-tight text-black min-w-[3rem] text-right">
                         {(n.score ?? 0).toFixed(0)}
                       </span>
+                      <button
+                        data-testid={`niche-build-gig-${n.keyword}`}
+                        onClick={(e) => { e.stopPropagation(); onBuild(n.display_keyword || n.keyword); }}
+                        title="Build a full gig setup for this niche"
+                        className="flex items-center gap-1 border border-black px-2 py-1 uppercase tracking-[0.15em] hover:bg-amber-500 hover:border-amber-500 hover:text-white transition-colors"
+                      >
+                        <Hammer size={10} weight="bold" /> Build Gig
+                      </button>
                     </>
                   )}
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
