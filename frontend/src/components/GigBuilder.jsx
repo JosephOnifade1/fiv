@@ -7,6 +7,7 @@ import { SectionShell } from "./gig/parts";
 import { TitlesBody, CategoryBody, TagsBody } from "./gig/OverviewSections";
 import { PricingBody, DescriptionBody, FaqBody, pricingText } from "./gig/ContentSections";
 import { RequirementsBody, GalleryBody, Checklist } from "./gig/ExtraSections";
+import { AuditSummary } from "./gig/AuditSummary";
 
 const HEAD = { fontFamily: "'Cabinet Grotesk', system-ui" };
 const STEPS = [
@@ -117,7 +118,7 @@ export const GigBuilder = ({ setupId, onClose, onUpgrade, onRescan }) => {
       <div className="px-6 lg:px-8 py-8 max-w-[1400px] mx-auto">
         <div className="mb-8">
           <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-zinc-500 flex items-center gap-2">
-            <Hammer size={12} weight="bold" /> Gig Builder
+            <Hammer size={12} weight="bold" /> {setup.kind === "audit" ? "Gig Audit" : "Gig Builder"}
           </div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tighter mt-1" style={HEAD} data-testid="gig-builder-keyword">
             {setup.keyword}
@@ -141,6 +142,11 @@ export const GigBuilder = ({ setupId, onClose, onUpgrade, onRescan }) => {
             <button data-testid="gig-rescan-btn" onClick={() => onRescan(setup.keyword)}
               className="bg-black text-white px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.2em] hover:bg-amber-500">Rescan</button>
           </div>
+        )}
+
+        {setup.audit && (
+          <AuditSummary audit={setup.audit} after={setup.score} sectionTitles={s.titles}
+            pending={setup.pending_sections.includes("audit")} />
         )}
 
         <div className="grid lg:grid-cols-[1fr_320px] gap-6 items-start">

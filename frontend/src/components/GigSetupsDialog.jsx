@@ -42,7 +42,12 @@ export const GigSetupsDialog = ({ open, onOpenChange, onOpenSetup }) => {
             <div key={g.id} className="flex items-center gap-3 px-6 py-3 hover:bg-zinc-50" data-testid={`gig-setup-row-${g.id}`}>
               <Hammer size={14} weight="bold" className="text-amber-500 shrink-0" />
               <button onClick={() => onOpenSetup(g.id)} data-testid={`gig-setup-open-${g.id}`} className="flex-1 text-left min-w-0">
-                <div className="font-mono text-sm font-bold truncate">{g.keyword}</div>
+                <div className="font-mono text-sm font-bold truncate flex items-center gap-2">
+                  {g.kind === "audit" && (
+                    <span className="font-mono text-[9px] uppercase tracking-[0.2em] bg-black text-amber-400 px-1.5 py-0.5" data-testid={`gig-setup-audit-badge-${g.id}`}>Audit</span>
+                  )}
+                  {g.keyword}
+                </div>
                 <div className="font-mono text-[11px] text-zinc-500 truncate">{g.title ? `I will ${g.title}` : "Building…"}</div>
               </button>
               <span className="font-mono text-[10px] text-zinc-400 shrink-0">{new Date(g.updated_at).toLocaleDateString()}</span>

@@ -14,7 +14,8 @@ import { SearchBar } from "../components/SearchBar";
 import { PlanBadge, useBilling } from "../components/Billing";
 import { LiveNicheBoard } from "../components/LiveNicheBoard";
 import { ReferralDialog } from "../components/ReferralDialog";
-import { Gift, Hammer, Stack } from "@phosphor-icons/react";
+import { Gift, Hammer, Stack, MagnifyingGlassPlus } from "@phosphor-icons/react";
+import { GigAuditDialog } from "../components/GigAuditDialog";
 import { GigBuilder } from "../components/GigBuilder";
 import { GigSetupsDialog } from "../components/GigSetupsDialog";
 import {
@@ -34,6 +35,7 @@ export default function Dashboard() {
   const [gigSetupId, setGigSetupId] = useState(null);
   const [gigListOpen, setGigListOpen] = useState(false);
   const [gigBusy, setGigBusy] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
 
   const buildGig = async (payload) => {
     setGigBusy(true);
@@ -182,6 +184,13 @@ export default function Dashboard() {
               className="text-[10px] uppercase tracking-[0.2em] font-mono px-3 py-1.5 border border-zinc-300 bg-white hover:bg-black hover:text-white transition-colors flex items-center gap-1"
             >
               <Gift size={11} weight="bold" /> Refer
+            </button>
+            <button
+              data-testid="open-gig-audit-btn"
+              onClick={() => setAuditOpen(true)}
+              className="text-[10px] uppercase tracking-[0.2em] font-mono px-3 py-1.5 border border-black bg-black text-white hover:bg-amber-500 hover:border-amber-500 transition-colors flex items-center gap-1"
+            >
+              <MagnifyingGlassPlus size={11} weight="bold" /> Gig Audit
             </button>
             <button
               data-testid="open-gig-setups-btn"
@@ -408,6 +417,9 @@ export default function Dashboard() {
       </div>
 
       {PricingMount}
+      <GigAuditDialog open={auditOpen} onOpenChange={setAuditOpen}
+        onStarted={(id) => { setAuditOpen(false); setGigSetupId(id); }}
+        onNeedScan={() => { setAuditOpen(false); toast("Type a keyword in the search bar to scan it"); }} />
       <GigSetupsDialog open={gigListOpen} onOpenChange={setGigListOpen}
         onOpenSetup={(id) => { setGigListOpen(false); setGigSetupId(id); }} />
       {gigSetupId && (

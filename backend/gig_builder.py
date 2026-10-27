@@ -10,7 +10,7 @@ from docx import Document
 from docx.shared import Pt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any, Optional
 
 from auth import get_current_user
@@ -47,6 +47,32 @@ class RegenIn(BaseModel):
 class PatchIn(BaseModel):
     section: str
     value: Any
+
+
+class OrigPackage(BaseModel):
+    tier: str
+    name: str = Field("", max_length=200)
+    description: str = Field("", max_length=500)
+    price: Optional[float] = Field(None, ge=0, le=100000)
+    delivery_days: Optional[int] = Field(None, ge=0, le=365)
+
+
+class OrigFaq(BaseModel):
+    question: str = Field(..., max_length=500)
+    answer: str = Field(..., max_length=2000)
+
+
+class OriginalGig(BaseModel):
+    title: str = Field(..., min_length=5, max_length=200)
+    tags: list[str] = Field(default_factory=list, max_length=10)
+    description: str = Field("", max_length=5000)
+    packages: list[OrigPackage] = Field(default_factory=list, max_length=3)
+    faq: list[OrigFaq] = Field(default_factory=list, max_length=15)
+
+
+class AuditIn(BaseModel):
+    job_id: str
+    original: OriginalGig
 
 
 GIG_SYSTEM = (
@@ -88,6 +114,10 @@ def price_anchors(gigs: list[dict], metrics: dict) -> dict:
 
 # ---------------- prompts ----------------
 def _ctx_block(ctx: dict) -> str:
+    original = ""
+    if ctx.get("original"):
+        original = ("\nSELLER'S EXISTING GIG — rewrite and improve it for ranking. Keep the real services, "
+                    f"deliverables and strengths they offer; fix weak keywords and structure:\n{ctx['original']}\n")
     return (
         f"MAIN KEYWORD: \"{ctx['keyword']}\"\n"
         f"Top-ranking gig titles: {ctx['top_titles']}\n"
@@ -95,7 +125,66 @@ def _ctx_block(ctx: dict) -> str:
         f"Fiverr autocomplete phrases (high search demand): {ctx['autocomplete']}\n"
         f"Price stats USD: median {ctx['anchors']['median']}, top decile {ctx['anchors']['top_decile']}\n"
         f"Typical delivery days of top gigs: {ctx['delivery_days']}\n"
+        f"{original}"
     )
+
+
+AUDIT_PROMPT = (
+    "Audit the SELLER'S EXISTING GIG against the niche data above. List 5-8 concrete problems that hurt "
+    "search ranking or buyer conversion, most damaging first. section is one of titles, tags, category, "
+    "pricing, description, faq, requirements, gallery. severity is high, medium or low. problem max 140 chars, "
+    "fix max 180 chars and must be specific (quote keywords or numbers).\n"
+    "STRICT JSON: {\"issues\": [{\"section\": \"titles\", \"severity\": \"high\", \"problem\": \"...\", \"fix\": \"...\"}]}"
+)
+
+
+async def generate_audit(ctx: dict) -> list[dict]:
+    data = _parse_json(await run_chat(_gig_chat(), f"{_ctx_block(ctx)}\n{AUDIT_PROMPT}"), {})
+    out = []
+    for i in data.get("issues") or []:
+        if not isinstance(i, dict) or not i.get("problem"):
+            continue
+        out.append({
+            "section": i.get("section") if i.get("section") in SECTIONS else "description",
+            "severity": i.get("severity") if i.get("severity") in ("high", "medium", "low") else "medium",
+            "problem": str(i["problem"])[:200], "fix": str(i.get("fix", ""))[:260],
+        })
+    return out[:8]
+
+
+def original_text(o: dict) -> str:
+    parts = [f"Title: I will {o.get('title', '')}", f"Tags: {', '.join(o.get('tags') or [])}",
+             f"Description: {o.get('description', '')}"]
+    for p in o.get("packages") or []:
+        parts.append(f"Package {p.get('tier')}: {p.get('name', '')} — {p.get('description', '')} — "
+                     f"${p.get('price', '')}, {p.get('delivery_days', '')} days")
+    for f in o.get("faq") or []:
+        parts.append(f"FAQ: {f.get('question', '')} / {f.get('answer', '')}")
+    return "\n".join(parts)[:3500]
+
+
+def original_sections(o: dict) -> dict:
+    s = {}
+    if o.get("title"):
+        s["titles"] = [{"text": o["title"]}]
+    if o.get("tags"):
+        s["tags"] = o["tags"]
+    if o.get("description"):
+        s["description"] = o["description"]
+    pk = [p for p in o.get("packages") or [] if p.get("price")]
+    if pk:
+        s["pricing"] = {"packages": [{"tier": p.get("tier", ""), "name": p.get("name", ""),
+                                      "description": p.get("description", ""), "price": float(p["price"])} for p in pk]}
+    if o.get("faq"):
+        s["faq"] = o["faq"]
+    return s
+
+
+def before_score(keyword: str, original: dict) -> dict:
+    secs = original_sections(original)
+    items = build_checklist({"keyword": keyword, "sections": secs}, set())
+    items = [c for c in items if c["section"] in secs]
+    return {"checklist": items, "passed": sum(c["status"] == "pass" for c in items), "total": len(items)}
 
 
 PROMPTS = {
@@ -362,6 +451,9 @@ def present(setup: dict, pro: bool) -> dict:
     age = _iso_age_days(setup.get("scan_created_at"))
     return {
         "id": setup["id"], "keyword": setup["keyword"], "job_id": setup.get("job_id"),
+        "kind": setup.get("kind", "build"),
+        "audit": {"original": setup.get("original"), "before": setup.get("before"),
+                  "issues": setup.get("audit_issues")} if setup.get("kind") == "audit" else None,
         "status": setup.get("status", "complete"), "pending_sections": setup.get("pending_sections", []),
         "sections": sections, "locked_sections": sorted(locked), "is_pro": pro,
         "failed_sections": setup.get("failed_sections", []),
@@ -485,11 +577,12 @@ def make_gig_routes(users_col, jobs_col, gigs_col):
 
     async def _run_build(sid: str, ctx: dict, wanted: list[str]):
         async def one(name):
+            field = "audit_issues" if name == "audit" else f"sections.{name}"
             try:
-                val = await generate_section(name, ctx)
+                val = await (generate_audit(ctx) if name == "audit" else generate_section(name, ctx))
             except Exception:
                 val = None
-            upd = {"$pull": {"pending_sections": name}, "$set": {f"sections.{name}": val}}
+            upd = {"$pull": {"pending_sections": name}, "$set": {field: val}}
             if not val:
                 upd["$addToSet"] = {"failed_sections": name}
             await gigs_col.update_one({"id": sid}, upd)
@@ -515,12 +608,35 @@ def make_gig_routes(users_col, jobs_col, gigs_col):
         bg.add_task(_run_build, setup["id"], ctx, wanted)
         return present(setup, pro)
 
+    @gig_router.post("/audit")
+    async def audit(body: AuditIn, bg: BackgroundTasks, user=Depends(get_current_user)):
+        udoc = await _user(user)
+        pro = is_pro(udoc)
+        job = await _find_job(user["id"], BuildIn(job_id=body.job_id))
+        original = body.original.model_dump()
+        original["title"] = re.sub(r"^\s*i will\s+", "", original["title"], flags=re.I).strip()
+        original["tags"] = [t.strip() for t in original["tags"] if t.strip()][:10]
+        original["packages"] = [p for p in original["packages"] if p["name"] or p["price"]]
+        ctx = await _ctx_from_job(job)
+        ctx["original"] = original_text(original)
+        wanted = (SECTIONS if pro else [s for s in SECTIONS if s in FREE_SECTIONS]) + ["audit"]
+        now = datetime.now(timezone.utc).isoformat()
+        setup = {"id": str(uuid.uuid4()), "user_id": user["id"], "keyword": job["keyword"], "kind": "audit",
+                 "job_id": job["id"], "scan_created_at": job.get("created_at"), "context": ctx,
+                 "original": original, "before": before_score(job["keyword"], original), "audit_issues": None,
+                 "sections": {k: None for k in SECTIONS}, "failed_sections": [], "pending_sections": wanted,
+                 "status": "building", "created_at": now, "updated_at": now}
+        await gigs_col.insert_one(dict(setup))
+        bg.add_task(_run_build, setup["id"], ctx, wanted)
+        return present(setup, pro)
+
     @gig_router.get("")
     async def list_setups(user=Depends(get_current_user)):
         docs = await gigs_col.find({"user_id": user["id"]}, {"_id": 0, "context": 0}) \
             .sort("updated_at", -1).limit(100).to_list(100)
         return {"items": [{
             "id": d["id"], "keyword": d["keyword"], "created_at": d["created_at"], "updated_at": d["updated_at"],
+            "kind": d.get("kind", "build"),
             "title": ((d.get("sections") or {}).get("titles") or [{}])[0].get("text"),
         } for d in docs]}
 
