@@ -122,7 +122,7 @@ export const GigAuditDialog = ({ open, onOpenChange, onStarted, onNeedScan }) =>
             <div className="flex items-center border border-zinc-300 focus-within:border-black">
               <span className="pl-3 font-mono text-xs text-zinc-400">I will</span>
               <input className="flex-1 px-2 py-2 font-mono text-xs outline-none" value={title}
-                onChange={(e) => setTitle(e.target.value)} data-testid="audit-title-input" placeholder="design a modern logo for your business" />
+                onChange={(e) => setTitle(e.target.value.replace(/^\s*i will\s+/i, ""))} data-testid="audit-title-input" placeholder="design a modern logo for your business" />
             </div>
           </div>
           <div>

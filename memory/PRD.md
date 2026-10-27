@@ -38,13 +38,18 @@ Build a tool that scrapes deep into Fiverr to identify "Underserved High-Value G
 - Fixed: LLM calls blocked the event loop (all AI routes now run via ai_insights.run_chat in a thread)
 - User decision: Claude integration CANCELLED — do not add or suggest it again
 
+## Gig Audit (Jun 2026) — iteration_6.json: 9/9 backend, all frontend flows pass
+- POST /api/gigs/audit {job_id (must be user's completed scan), original:{title, tags, description, packages, faq}} → saved as fs_gig_setups kind="audit" with original, before score (pasted sections only), AI issues list (5-8, severity + fix) and a full rewrite (same sections/access rules as Gig Builder)
+- Frontend: GigAuditDialog (header "Gig Audit"), gig/AuditSummary (before→after on shared rules, title compare, issues); Audit badge in My Gigs
+- Empty LLM sections retried once
+
 ## Open issue
 - Dashboard scan calls both /api/scan and /api/scrape/search → each search may count as 2 scans of free quota (not yet fixed)
 
 ## Next Action Items / Backlog
 - P0: Fix double quota count per dashboard scan
 - P1: Gig Builder Phase 2 — side-by-side compare with top 3 gigs; inline editing with live checklist
-- P2: Gig Builder Phase 3 — Gig Audit of existing gig; generated gallery images
+- P2: Gig Builder Phase 3 — generated gallery images (Gig Audit DONE)
 - P1: Captcha-solver integration so live scrape works without proxies
 - P1: Scheduled re-scans for watchlist (cron) so week-over-week trends auto-populate
 - P2: Multi-keyword batch scan with comparison view

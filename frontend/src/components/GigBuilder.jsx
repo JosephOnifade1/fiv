@@ -145,7 +145,7 @@ export const GigBuilder = ({ setupId, onClose, onUpgrade, onRescan }) => {
         )}
 
         {setup.audit && (
-          <AuditSummary audit={setup.audit} after={setup.score} sectionTitles={s.titles}
+          <AuditSummary audit={setup.audit} checklist={setup.checklist} sectionTitles={s.titles}
             pending={setup.pending_sections.includes("audit")} />
         )}
 

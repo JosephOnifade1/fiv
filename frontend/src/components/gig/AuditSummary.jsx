@@ -4,6 +4,16 @@ import { ArrowRight, Spinner, WarningOctagon } from "@phosphor-icons/react";
 const HEAD = { fontFamily: "'Cabinet Grotesk', system-ui" };
 const SEV = { high: "bg-red-600 text-white", medium: "bg-amber-500 text-white", low: "bg-zinc-200 text-zinc-700" };
 const pct = (s) => (s.total ? Math.round((s.passed / s.total) * 100) : 0);
+const tally = (items) => ({ passed: items.filter((c) => c.status === "pass").length, total: items.length });
+
+// Compare only rules that exist in both the pasted gig and the visible rewrite
+const sharedScores = (before, afterChecklist) => {
+  const after = afterChecklist.filter((c) => c.status === "pass" || c.status === "fail");
+  const keys = new Set(after.map((c) => c.key));
+  const b = before.checklist.filter((c) => keys.has(c.key));
+  const bKeys = new Set(b.map((c) => c.key));
+  return { before: tally(b), after: tally(after.filter((c) => bKeys.has(c.key))) };
+};
 
 const ScoreBox = ({ label, score, testid, gold }) => (
   <div className={`p-5 ${gold ? "bg-black text-white" : "bg-white"}`} data-testid={testid}>
@@ -13,12 +23,14 @@ const ScoreBox = ({ label, score, testid, gold }) => (
   </div>
 );
 
-export const AuditSummary = ({ audit, after, pending, sectionTitles }) => (
+export const AuditSummary = ({ audit, checklist, pending, sectionTitles }) => {
+  const sc = sharedScores(audit.before, checklist);
+  return (
   <section className="mb-8 border border-black" data-testid="gig-audit-summary">
     <div className="grid md:grid-cols-[1fr_auto_1fr] items-center bg-zinc-100 gap-px">
-      <ScoreBox label="Your gig now" score={audit.before} testid="audit-before-score" />
+      <ScoreBox label="Your gig now" score={sc.before} testid="audit-before-score" />
       <div className="hidden md:flex px-4 justify-center bg-zinc-100"><ArrowRight size={22} weight="bold" /></div>
-      <ScoreBox label="Rewritten gig" score={after} testid="audit-after-score" gold />
+      <ScoreBox label="Rewritten gig" score={sc.after} testid="audit-after-score" gold />
     </div>
     {audit.original?.title && sectionTitles?.[0] && (
       <div className="border-t border-zinc-200 px-5 py-3 font-mono text-xs space-y-1" data-testid="audit-title-compare">
@@ -54,4 +66,5 @@ export const AuditSummary = ({ audit, after, pending, sectionTitles }) => (
       )}
     </div>
   </section>
-);
+  );
+};

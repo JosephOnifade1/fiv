@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 6: tested Gig Audit end-to-end (backend and frontend), plus a quick Gig Builder regression. Backend suite tests/test_gig_audit.py has 9 tests. Run 1: 7/9 passed; the 2 failures were LLM output that could not be used (a Pro audit had requirements=[] and a free audit had issues=[]). Run 2: 9/9 passed. Confirmed working: POST /api/gigs/audit returns in 0.3s with kind='audit', status='building' and 9 pending_sections including 'audit'. The leading 'I will' is stripped (also '  i will' in lowercase). The before checklist covers only the pasted sections: a title-only paste gives only title rules (2/2), and a full paste gives 8 rules with no requirements, gallery or category rules. A description with WhatsApp gives desc_safe=fail. The audit completes in 15-18s with 6 issues, each with a valid section and a severity of high, medium or low. All 8 sections are rewritten for Pro, the after score is 11/11, and the rewritten description has no WhatsApp. Scan quota does not change. GET /api/gigs returns kind for every item. A title under 5 chars returns 422, a missing job_id returns 422, and an unknown job or another user's job returns 404 SCAN_REQUIRED. A free audit rewrites only titles, tags and category; the other 5 sections are null, issues are returned and docx returns 402. POST /api/gigs/build still returns kind='build' and audit=null and completes. Frontend (all passed): Pro flow: open-gig-audit-btn opens the dialog, a keyword is picked from the select, all fields are filled (packages and FAQ were parsed correctly into the payload), and submit opens the builder. The builder shows the 'Gig Audit' label, before score 25% (2/8) and after score 100% (11/11), the title comparison, and 6 issues with colour-coded severity badges; a spinner shows while the audit runs. My Gigs shows the Audit badge and reopens the audit. Free flow (demo): audit summary and issues are visible; 5 sections are locked and blurred with gig-upgrade-* buttons that open pricing-dialog; a short title shows the 'Paste your gig title' toast. A newly registered user with no scans sees audit-no-scans, submit is disabled, and 'Scan one first' closes the dialog and shows a toast.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/gigs/audit (background _run_build)", "issue": "Some sections come back empty at random: about 2 of ~35 LLM section calls in my runs. A free audit had audit_issues=[] (the UI then shows 'No issues could be listed') and a Pro audit had requirements=[]. Root cause: _ctx_block adds 'SELLER'S EXISTING GIG — rewrite and improve it', so for every single-section prompt Gemini often returns a whole rewritten gig (keys like improved_gig, gig_title, optimized_description, packages next to the asked key). The output is 2-2.5k chars instead of a small JSON, which raises the risk that the asked key is missing, nested or truncated. There is also no retry when a section comes back empty."},
+      {"endpoint": "OriginalGig.tags", "issue": "The tags list is capped at 10 items, but a single tag has no length limit, so a pasted tag can be very long (description is capped at 5000)."},
+      {"endpoint": "POST /api/gigs/audit packages filter", "issue": "A package is kept only if it has a name or a price (p['name'] or p['price']). A price of 0 counts as empty, so a package with only a price of 0 is dropped. Low impact."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Gig Audit summary (free user)", "issues": ["The after score is out of only the 4 unlocked rules (always 4/4 = 100%), while the before score is out of 6-8 rules. A free user sees something like 17% -> 100%, which is misleading. Compare the same rule set (only the sections that are both pasted and unlocked), or label the after score 'free sections only'."]},
+      {"screen": "Gig Audit dialog title input", "issue_note": "", "issues": ["The input already has a fixed 'I will' prefix. If the user pastes 'I will do...', it shows 'I will I will do...' while typing. The backend strips it, but the input could strip it on change or paste."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_gig_audit.py", "/app/test_reports/pytest/iter6_gig_audit.xml"],
+  "action_items": [
+    "Make audit and section generation more reliable: in _ctx_block tell the model to use the existing gig only as context and to return ONLY the JSON keys asked for this section, not a full gig. Retry once in _run_build.one when val is empty (especially for 'audit').",
+    "Free user audit: make the before and after scores comparable (same rule subset), or label the after score clearly.",
+    "Optional: add max_length=50 per tag in OriginalGig, and strip a leading 'I will' in audit-title-input on the client."
+  ],
+  "critical_code_review_comments": [
+    "present(): the after score covers all rules for unlocked sections, while before_score covers only the pasted sections, so the denominators differ (Pro 2/8 vs 11/11). The percentages are still readable, but this is not a like-for-like comparison.",
+    "Regenerate on an audit setup reuses setup['context'], which includes the original gig. That is correct, but the same verbose-output risk applies.",
+    "build_docx ignores the audit data (before score and issues). Pro users downloading an audit get only the rewrite. Consider adding an 'Audit findings' section.",
+    "If every wanted section fails, status becomes 'failed'. Because 'audit' is in wanted, a free audit only gets status 'failed' if all 4 calls fail. That is fine."
+  ],
+  "updated_files": ["/app/backend/tests/test_gig_audit.py"],
+  "success_rate": {"backend": "Run 1: 7/9 (2 LLM-output flakes); Run 2: 9/9. About 6% of LLM section calls came back empty.", "frontend": "100% of the requested flows passed"},
+  "flaky_tests": ["test_02_pro_audit_completes (requirements=[] once in 2 runs)", "test_07_free_audit (audit issues=[] once in 2 runs)"],
+  "test_credentials": "pro@fiverrscout.example.com / Pro1234!, demo@fiverrscout.example.com / Demo1234! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Pytest deletes its setups. UI tests left 1 Pro audit and 1 demo audit setup for 'minimalist logo design'. Registered user test_noscan_39879@example.com / Test1234! (no scans).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Gig Audit is in /app/backend/gig_builder.py (POST /api/gigs/audit, collection fs_gig_setups with kind='audit'). Run tests/test_gig_audit.py (about 50s, real Gemini). The demo user has 4 scanned keywords, and their scans are 168 days old (stale warning shows). Audit keyword options use testid audit-keyword-option-<job_id>; select one with get_by_role('option', name=...).",
+  "rca of the issue": "Empty sections: the shared _ctx_block adds the original gig with the instruction 'rewrite and improve it', so Gemini writes a whole new gig in every section call. I confirmed this with direct calls: requirements, gallery and category replies had extra keys such as gig_title, search_tags, improved_gig and packages, and were 2-2.5k chars long. When the asked key is missing or nested, the cleaner returns [] and the section is marked failed. Mitigation: return only the requested keys, and retry once on an empty result."
+}

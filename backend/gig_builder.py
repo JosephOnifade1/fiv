@@ -11,7 +11,7 @@ from docx.shared import Pt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from auth import get_current_user
 from billing import is_pro
@@ -64,7 +64,7 @@ class OrigFaq(BaseModel):
 
 class OriginalGig(BaseModel):
     title: str = Field(..., min_length=5, max_length=200)
-    tags: list[str] = Field(default_factory=list, max_length=10)
+    tags: list[Annotated[str, Field(max_length=60)]] = Field(default_factory=list, max_length=10)
     description: str = Field("", max_length=5000)
     packages: list[OrigPackage] = Field(default_factory=list, max_length=3)
     faq: list[OrigFaq] = Field(default_factory=list, max_length=15)
@@ -116,8 +116,9 @@ def price_anchors(gigs: list[dict], metrics: dict) -> dict:
 def _ctx_block(ctx: dict) -> str:
     original = ""
     if ctx.get("original"):
-        original = ("\nSELLER'S EXISTING GIG — rewrite and improve it for ranking. Keep the real services, "
-                    f"deliverables and strengths they offer; fix weak keywords and structure:\n{ctx['original']}\n")
+        original = ("\nSELLER'S EXISTING GIG (reference only — reuse their real services, deliverables and strengths, "
+                    "but answer ONLY with the exact JSON asked below, nothing else):\n"
+                    f"{ctx['original']}\n")
     return (
         f"MAIN KEYWORD: \"{ctx['keyword']}\"\n"
         f"Top-ranking gig titles: {ctx['top_titles']}\n"
@@ -578,10 +579,14 @@ def make_gig_routes(users_col, jobs_col, gigs_col):
     async def _run_build(sid: str, ctx: dict, wanted: list[str]):
         async def one(name):
             field = "audit_issues" if name == "audit" else f"sections.{name}"
-            try:
-                val = await (generate_audit(ctx) if name == "audit" else generate_section(name, ctx))
-            except Exception:
-                val = None
+            val = None
+            for _ in range(2):
+                try:
+                    val = await (generate_audit(ctx) if name == "audit" else generate_section(name, ctx))
+                except Exception:
+                    val = None
+                if val:
+                    break
             upd = {"$pull": {"pending_sections": name}, "$set": {field: val}}
             if not val:
                 upd["$addToSet"] = {"failed_sections": name}
@@ -616,7 +621,7 @@ def make_gig_routes(users_col, jobs_col, gigs_col):
         original = body.original.model_dump()
         original["title"] = re.sub(r"^\s*i will\s+", "", original["title"], flags=re.I).strip()
         original["tags"] = [t.strip() for t in original["tags"] if t.strip()][:10]
-        original["packages"] = [p for p in original["packages"] if p["name"] or p["price"]]
+        original["packages"] = [p for p in original["packages"] if p["name"] or p["price"] is not None]
         ctx = await _ctx_from_job(job)
         ctx["original"] = original_text(original)
         wanted = (SECTIONS if pro else [s for s in SECTIONS if s in FREE_SECTIONS]) + ["audit"]
