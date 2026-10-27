@@ -17,8 +17,8 @@ from auth import get_current_user
 from billing import is_pro
 from scraper import fetch_autocomplete
 import os
-from ai_insights import _parse_json
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from ai_insights import _parse_json, run_chat
+from emergentintegrations.llm.chat import LlmChat
 
 gig_router = APIRouter(prefix="/api/gigs")
 
@@ -171,7 +171,7 @@ def _keyword_pool(ctx: dict) -> list[str]:
     return list(dict.fromkeys(p for p in pool if p))
 
 
-def clean_titles(data: dict, ctx: dict) -> list[dict]:
+def clean_titles(data: dict, ctx: dict, keep_order: bool = False) -> list[dict]:
     pool = _keyword_pool(ctx)
     out = []
     for t in (data.get("titles") or [])[:5]:
@@ -182,7 +182,8 @@ def clean_titles(data: dict, ctx: dict) -> list[dict]:
         low = t.lower()
         covered = [p for p in pool if p in low]
         out.append({"text": t, "keywords_covered": covered, "coverage": len(covered)})
-    out.sort(key=lambda x: x["coverage"], reverse=True)
+    if not keep_order:
+        out.sort(key=lambda x: x["coverage"], reverse=True)
     return out[:3]
 
 
@@ -293,7 +294,8 @@ async def generate_section(section: str, ctx: dict):
         a = ctx["anchors"]
         prompt = prompt.replace("${basic}", f"${a['basic']}").replace("${standard}", f"${a['standard']}") \
                        .replace("${premium}", f"${a['premium']}")
-    text = await _gig_chat().send_message(UserMessage(text=f"{_ctx_block(ctx)}\n{prompt}"))
+    # LlmChat uses sync litellm.completion internally -> run off the event loop so the API stays responsive
+    text = await run_chat(_gig_chat(), f"{_ctx_block(ctx)}\n{prompt}")
     return CLEANERS[section](_parse_json(text, {}), ctx)
 
 
@@ -344,9 +346,12 @@ def _iso_age_days(iso: Optional[str]) -> Optional[float]:
     if not iso:
         return None
     try:
-        return round((datetime.now(timezone.utc) - datetime.fromisoformat(iso)).total_seconds() / 86400, 1)
+        dt = datetime.fromisoformat(iso)
     except ValueError:
         return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return round((datetime.now(timezone.utc) - dt).total_seconds() / 86400, 1)
 
 
 def present(setup: dict, pro: bool) -> dict:
@@ -552,8 +557,13 @@ def make_gig_routes(users_col, jobs_col, gigs_col):
         setup = await _owned(sid, user["id"])
         ctx = setup["context"]
         v = body.value
+        if body.section in ("faq", "requirements", "gallery", "pricing", "category") and not (
+                isinstance(v, dict) if body.section in ("pricing", "category")
+                else isinstance(v, list) and all(isinstance(i, dict) for i in v)):
+            raise HTTPException(400, "Invalid value for this section")
         if body.section == "titles":
-            value = clean_titles({"titles": [t["text"] if isinstance(t, dict) else t for t in (v or [])]}, ctx)
+            value = clean_titles({"titles": [t["text"] if isinstance(t, dict) else t for t in (v or [])]}, ctx,
+                                 keep_order=True)
         elif body.section == "pricing":
             value = clean_pricing(v or {}, ctx)
             for p, src in zip(value["packages"], (v or {}).get("packages") or []):

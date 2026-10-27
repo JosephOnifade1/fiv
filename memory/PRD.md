@@ -30,7 +30,21 @@ Build a tool that scrapes deep into Fiverr to identify "Underserved High-Value G
 
 ## Testing (16/16 backend pass, 95% frontend pass — iteration_1.json)
 
+## Gig Builder (Jun 2026) — iteration_5.json: 15/15 backend, frontend flows pass
+- backend/gig_builder.py: POST /api/gigs/build (background, per-section progressive fill), GET /api/gigs, GET/PATCH/DELETE /api/gigs/{id}, POST /api/gigs/{id}/regenerate, GET /api/gigs/{id}/docx
+- Sections: titles(3, ≤80 after "I will", coverage-ranked), category, tags(5×≤20), pricing (anchored to niche median/top decile, Fiverr-style rounding), description(≤1200, off-platform words stripped), FAQ 5-8, requirements 3-5, gallery 3 filenames; ranking checklist
+- Free users: titles/tags/category only, other sections locked (402) + blurred upgrade UI; Pro/admin: everything incl. Word download; no scan credits used; stale (>7d) scan warning
+- Collection: fs_gig_setups. Frontend: GigBuilder.jsx overlay, components/gig/*, GigSetupsDialog ("My Gigs"), Build Gig buttons on scan banner, AI panel, Live Niche Board rows
+- Fixed: LLM calls blocked the event loop (all AI routes now run via ai_insights.run_chat in a thread)
+- User decision: Claude integration CANCELLED — do not add or suggest it again
+
+## Open issue
+- Dashboard scan calls both /api/scan and /api/scrape/search → each search may count as 2 scans of free quota (not yet fixed)
+
 ## Next Action Items / Backlog
+- P0: Fix double quota count per dashboard scan
+- P1: Gig Builder Phase 2 — side-by-side compare with top 3 gigs; inline editing with live checklist
+- P2: Gig Builder Phase 3 — Gig Audit of existing gig; generated gallery images
 - P1: Captcha-solver integration so live scrape works without proxies
 - P1: Scheduled re-scans for watchlist (cron) so week-over-week trends auto-populate
 - P2: Multi-keyword batch scan with comparison view

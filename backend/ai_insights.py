@@ -2,7 +2,13 @@
 import os
 import json
 import uuid
+import asyncio
 from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+
+async def run_chat(chat: LlmChat, text: str) -> str:
+    # LlmChat calls sync litellm internally; run it off the event loop
+    return await asyncio.to_thread(lambda: asyncio.run(chat.send_message(UserMessage(text=text))))
 
 EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
 
@@ -35,7 +41,7 @@ async def expand_keywords(base_keyword: str, gig_titles: list[str]) -> dict:
         "sub-niches. Favor industry/vertical mashups with 2026 trends.\n\n"
         "STRICT JSON: {\"expansions\": [{\"keyword\": \"...\", \"rationale\": \"...\", \"target_audience\": \"...\"}]}"
     )
-    return _parse_json(await _chat().send_message(UserMessage(text=prompt)), {"expansions": []})
+    return _parse_json(await run_chat(_chat(), prompt), {"expansions": []})
 
 
 async def summarize_report(keyword: str, analytics: dict, gigs: list[dict]) -> dict:
@@ -52,7 +58,7 @@ async def summarize_report(keyword: str, analytics: dict, gigs: list[dict]) -> d
         "First = headline opportunity/risk. Second = data backing. Third = action.\n\n"
         "STRICT JSON: {\"bullets\": [\"...\", \"...\", \"...\"], \"verdict\": \"GO|HOLD|AVOID\"}"
     )
-    return _parse_json(await _chat().send_message(UserMessage(text=prompt)), {"bullets": [], "verdict": "HOLD"})
+    return _parse_json(await run_chat(_chat(), prompt), {"bullets": [], "verdict": "HOLD"})
 
 
 async def suggest_pivots(keyword: str, analytics: dict, tags: list[str]) -> dict:
@@ -66,7 +72,7 @@ async def suggest_pivots(keyword: str, analytics: dict, tags: list[str]) -> dict
         "Each must explain WHY demand outpaces supply.\n\n"
         "STRICT JSON: {\"pivots\": [{\"pivot\": \"...\", \"why\": \"...\", \"estimated_demand_supply_ratio\": \"e.g. 4:1\"}]}"
     )
-    return _parse_json(await _chat().send_message(UserMessage(text=prompt)), {"pivots": []})
+    return _parse_json(await run_chat(_chat(), prompt), {"pivots": []})
 
 
 async def trend_verdict_2026(keyword: str, analytics: dict) -> dict:
@@ -87,7 +93,7 @@ async def trend_verdict_2026(keyword: str, analytics: dict) -> dict:
         "\"matched_trend\": \"the closest 2026 trend or null\", "
         "\"horizon_months\": 0-24, \"reasoning\": \"≤40 words\"}"
     )
-    return _parse_json(await _chat().send_message(UserMessage(text=prompt)),
+    return _parse_json(await run_chat(_chat(), prompt),
                        {"verdict": "NEUTRAL", "matched_trend": None, "horizon_months": 0, "reasoning": ""})
 
 
@@ -107,7 +113,7 @@ async def proximity_map(base_keyword: str, suggestions: list[str], known_metrics
         "\"audience_overlap_pct\": 0-100, "
         "\"rationale\": \"≤30 words\"}]}"
     )
-    return _parse_json(await _chat().send_message(UserMessage(text=prompt)), {"sidesteps": []})
+    return _parse_json(await run_chat(_chat(), prompt), {"sidesteps": []})
 
 
 def _parse_json(text: str, default: dict) -> dict:

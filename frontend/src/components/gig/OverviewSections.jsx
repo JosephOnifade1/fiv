@@ -36,7 +36,7 @@ export const TitlesBody = ({ titles, max, onSave }) => (
 
 export const CategoryBody = ({ cat }) => (
   <div className="flex flex-wrap items-center gap-2 font-mono text-sm" data-testid="gig-category-value">
-    {[cat.category, cat.subcategory, cat.service_type].filter(Boolean).map((c, i, arr) => (
+    {[cat.category, cat.subcategory, cat.service_type].filter((c, i, arr) => c && arr.indexOf(c) === i).map((c, i, arr) => (
       <React.Fragment key={i}>
         <span className="border border-zinc-300 px-2 py-1">{c}</span>
         {i < arr.length - 1 && <span className="text-zinc-400">›</span>}

@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 5 — Gig Builder tested end-to-end (backend + frontend). Found and FIXED one critical bug: gig_builder.generate_section awaited LlmChat.send_message, which internally calls sync litellm.completion and BLOCKED THE WHOLE FASTAPI EVENT LOOP. The 8 sections ran one after another (~60s), and every other API request (GET /api/gigs/{id} polling, /api/billing/me) hung for ~59s, so polls timed out. Fix: wrapped the call in asyncio.to_thread(asyncio.run(...)). After the fix the build takes ~13-15s with all sections in parallel and polls answer in 0.1s. Backend: 15/15 pytest pass after the fix (4 failed before it). Checked: build by keyword returns 'building' in 0.3s; status becomes complete with all 8 sections; score 11/11; all limits hold (titles <=80 without 'I will', ranked by coverage; 5 tags <=20; description <=1200; prices rise and are >=5, Basic $30 < median $35 = Standard < Premium $100; gallery files end in .jpg; 5-8 FAQ, 3-5 requirements, 2-3 extras); SCAN_REQUIRED returns 404, empty body returns 400; scans_used_this_month does not change; regenerate tags changes only tags; bad section returns 400; PATCH description/titles saves, off-platform words are stripped; list, docx (valid PK zip that python-docx can read) and delete work; another user's setup returns 404; free user gets only titles/tags/category, the other 5 sections are locked and null, regenerate/PATCH/docx on them return 402, free regenerate of tags returns 200; stale flag set for a 168-day-old scan. Frontend: Pro build from build-gig-btn and ai-build-gig-btn opens the full-screen builder; building indicator ('8 left') goes away; all sections fill in; 'I will' prefix and counters show; copy shows a toast; regenerate shows 'Writing' and then a toast; Word doc downloads gig_setup_minimalist_logo_design.docx; step nav and close work; My Gigs lists, opens and deletes setups; Live Board Build Gig on a niche never scanned shows the 'Scan this keyword first' toast with a 'Scan now' action. Free (demo): 5 gig-locked-* blurred sections with gig-upgrade-* buttons that open pricing-dialog; Word doc button opens pricing-dialog; stale warning and Rescan button show.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/gigs/build (background), POST /api/gigs/{id}/regenerate", "issue": "FIXED BY TESTER: the LLM call blocked the event loop (sync litellm.completion inside LlmChat). The whole API froze for about 60s on each build. Fixed in gig_builder.generate_section with asyncio.to_thread.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "ai_insights.py (all /api/ai/* routes)", "issue": "Same blocking pattern: 5 places use 'await _chat().send_message(...)'. Each AI insight call freezes the whole backend for 5-15s. This was there before this feature. Apply the same asyncio.to_thread fix."},
+      {"endpoint": "PATCH /api/gigs/{id} section=faq/requirements/gallery", "issue": "If the value list holds non-dict items (e.g. strings), f.get raises AttributeError and returns 500 instead of 400. The cleaners do not check the shape of each item."},
+      {"endpoint": "_iso_age_days", "issue": "If a job created_at is a naive ISO string (no timezone), subtracting it from an aware datetime raises TypeError, which is not caught and returns 500. Current data is aware, so this only matters for legacy rows."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "TitlesBody / PATCH titles", "issue": "When the user edits a title and blurs, the backend re-sorts titles by keyword coverage. The edited title can jump to another slot: after editing option 2 it moved to option 3 and the old option 3 took its place. Keep the user's order on PATCH, or only sort on generation.", "selector": "[data-testid='gig-title-input-1']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Gig Builder Category", "issues": ["Subcategory and service type often both say 'Logo Design', so it looks duplicated. You could hide service_type when it equals the subcategory."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_gig_builder.py", "/app/test_reports/pytest/iter5_gig_builder.xml"],
+  "action_items": [
+    "Review the tester's fix in /app/backend/gig_builder.py generate_section (asyncio.to_thread wrapper) and keep it.",
+    "Apply the same non-blocking wrapper to every LlmChat.send_message call in /app/backend/ai_insights.py. They currently freeze the whole API.",
+    "Keep the user's title order on PATCH titles (do not re-sort by coverage on edit).",
+    "Validate the shape of list items in PATCH faq/requirements/gallery and return 400 instead of 500."
+  ],
+  "critical_code_review_comments": [
+    "emergentintegrations LlmChat._execute_completion is async but calls sync litellm.completion. Any 'await send_message' blocks the event loop, so asyncio.gather of 8 sections ran one after another.",
+    "build() awaits fetch_autocomplete (timeout 20s) before it returns, so 'returns immediately' depends on autocomplete speed. It measured 0.3s here; a slow live scrape could delay the response by up to 20s.",
+    "clean_tags pads with scan autocomplete/tags, so the tags section never 'fails' even if the LLM fails. That is fine, but the failure would be silent.",
+    "PATCH pricing lets the user set prices that do not rise. The checklist then marks pricing as 'fail', which is acceptable feedback."
+  ],
+  "updated_files": ["/app/backend/gig_builder.py", "/app/backend/tests/test_gig_builder.py"],
+  "success_rate": {"backend": "15/15 (100%) after the tester fix; 11/15 before it", "frontend": "100% of the requested flows passed"},
+  "test_credentials": "pro@fiverrscout.example.com / Pro1234!, demo@fiverrscout.example.com / Demo1234! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Pytest creates and deletes its own setups. UI tests left about 5 'minimalist logo design' gig setups for the pro user and 1 for demo in fs_gig_setups.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Gig Builder routes are in /app/backend/gig_builder.py (collection fs_gig_setups). Run tests/test_gig_builder.py (about 45s, uses real Gemini). The niche-build-gig testid uses the lowercase keyword (e.g. 'niche-build-gig-agentic ai workflow design'). History sidebar buttons have no testid; select them by text. Demo user's scans are dated 2026-05, so builds for demo show the stale warning (168 days).",
+  "rca of the issue": "Symptom: GET /api/gigs/{id} and /api/billing/me timed out (>30s) while a build was running. Repro: POST /api/gigs/build, then poll right away; the first poll took 58.7s. Backend logs show the LiteLLM calls start one after another, never overlapping. Root cause: LlmChat.send_message -> _execute_completion -> litellm.completion (sync) runs on the event loop thread. Mitigation applied: text = await asyncio.to_thread(lambda: asyncio.run(_gig_chat().send_message(msg))). Verified: the build finishes in 13s with all sections in parallel and the poll latency is 0.1s."
+}
