@@ -6,8 +6,15 @@ import statistics
 import uuid
 from datetime import datetime, timezone
 
-from docx import Document
-from docx.shared import Pt
+try:
+    from docx import Document
+    from docx.shared import Pt
+    HAS_DOCX = True
+except ImportError:
+    Document = None  # type: ignore
+    Pt = None  # type: ignore
+    HAS_DOCX = False
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -18,7 +25,8 @@ from billing import is_pro
 from scraper import fetch_autocomplete
 import os
 from ai_insights import _parse_json, run_chat
-from emergentintegrations.llm.chat import LlmChat
+
+logger = __import__("logging").getLogger("fiverr-scout.gig_builder")
 
 gig_router = APIRouter(prefix="/api/gigs")
 
@@ -82,9 +90,17 @@ GIG_SYSTEM = (
 )
 
 
-def _gig_chat() -> LlmChat:
-    return LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"gig-{uuid.uuid4()}",
-                   system_message=GIG_SYSTEM).with_model("gemini", "gemini-3-flash-preview")
+def _gig_chat():
+    """Return a chat object if an LLM key is available, else None."""
+    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("EMERGENT_LLM_KEY", "")
+    if not key:
+        return None
+    try:
+        from emergentintegrations.llm.chat import LlmChat
+        return LlmChat(api_key=key, session_id=f"gig-{uuid.uuid4()}",
+                       system_message=GIG_SYSTEM).with_model("gemini", "gemini-3-flash-preview")
+    except Exception:
+        return None
 
 
 # ---------------- pricing anchors ----------------
@@ -139,8 +155,58 @@ AUDIT_PROMPT = (
 )
 
 
+
+
+def _algo_audit(ctx: dict) -> list[dict]:
+    """Return basic heuristic audit issues when no LLM is available."""
+    kw = ctx["keyword"]
+    a = ctx["anchors"]
+    original = ctx.get("original") or {}
+    issues = []
+    title = original.get("title", "")
+    if title and kw.lower() not in title.lower():
+        issues.append({"section": "titles", "severity": "high",
+                        "problem": f"Main keyword '{kw}' missing from gig title — hurts search ranking.",
+                        "fix": f"Start your title with '{kw}' or a close variant."})
+    desc = original.get("description", "")
+    if desc and len(desc) < 600:
+        issues.append({"section": "description", "severity": "high",
+                        "problem": f"Description only {len(desc)} chars — Fiverr recommends 600-1200 chars.",
+                        "fix": "Expand the description: add process steps, FAQ summary, and a CTA."})
+    tags = original.get("tags") or []
+    if len(tags) < 5:
+        issues.append({"section": "tags", "severity": "medium",
+                        "problem": f"Only {len(tags)} tags used — Fiverr allows 5.",
+                        "fix": "Add tags from top autocomplete phrases: " + ", ".join((ctx.get("autocomplete") or [])[:3])})
+    pkgs = original.get("packages") or []
+    if pkgs:
+        prices = [p.get("price", 0) for p in pkgs if p.get("price")]
+        if prices and min(prices) < a["basic"]:
+            issues.append({"section": "pricing", "severity": "medium",
+                            "problem": f"Basic price ${min(prices)} is below market median ${a['median']}.",
+                            "fix": f"Raise Basic to at least ${a['basic']} to align with top sellers."})
+    if not pkgs or len(pkgs) < 3:
+        issues.append({"section": "pricing", "severity": "high",
+                        "problem": "Less than 3 packages — missing Basic/Standard/Premium tiering.",
+                        "fix": "Create all three tiers to capture buyers across budget levels."})
+    faq = original.get("faq") or []
+    if len(faq) < 5:
+        issues.append({"section": "faq", "severity": "low",
+                        "problem": f"Only {len(faq)} FAQ items — 5-8 recommended to improve conversion.",
+                        "fix": "Add FAQs on: revisions, delivery, file formats, customisation, rights."})
+    return issues[:8]
+
+
 async def generate_audit(ctx: dict) -> list[dict]:
-    data = _parse_json(await run_chat(_gig_chat(), f"{_ctx_block(ctx)}\n{AUDIT_PROMPT}"), {})
+    chat = _gig_chat()
+    if chat is None:
+        # Algorithmic audit when no LLM is available
+        return _algo_audit(ctx)
+    try:
+        data = _parse_json(await run_chat(chat, f"{_ctx_block(ctx)}\n{AUDIT_PROMPT}"), {})
+    except Exception as exc:
+        logger.warning("LLM audit failed (%s) — using algorithmic audit", exc)
+        return _algo_audit(ctx)
     out = []
     for i in data.get("issues") or []:
         if not isinstance(i, dict) or not i.get("problem"):
@@ -378,15 +444,230 @@ CLEANERS = {
 }
 
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Algorithmic (no-LLM) fallbacks — used when LLM key absent or call fails
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _slug_words(text: str) -> str:
+    """Lower-case, hyphen-joined slug from a phrase."""
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def _algo_titles(ctx: dict) -> dict:
+    kw = ctx["keyword"]
+    pool = _keyword_pool(ctx)
+    extras = [p for p in pool if p != kw.lower()][:4]
+    combos = [
+        f"{kw}, {', '.join(extras[:2])}" if extras else kw,
+        f"professional {kw}, {extras[0]}" if extras else f"professional {kw} service",
+        f"{kw} for {extras[1] if len(extras) > 1 else 'your business'}, {extras[2] if len(extras) > 2 else kw + ' expert'}",
+    ]
+    return {"titles": [_trim_words(t.replace("I will ", ""), LIMITS["title"]) for t in combos]}
+
+
+def _algo_category(ctx: dict) -> dict:
+    kw = ctx["keyword"].lower()
+    if any(w in kw for w in ("logo", "banner", "design", "graphic", "flyer", "poster", "illustration")):
+        return {"category": "Graphics & Design", "subcategory": "Logo Design", "service_type": "Business Logo"}
+    if any(w in kw for w in ("write", "blog", "article", "content", "copy", "seo")):
+        return {"category": "Writing & Translation", "subcategory": "Articles & Blog Posts", "service_type": "Blog Post"}
+    if any(w in kw for w in ("video", "edit", "motion", "animation", "reel")):
+        return {"category": "Video & Animation", "subcategory": "Video Editing", "service_type": "YouTube Video"}
+    if any(w in kw for w in ("code", "python", "javascript", "react", "web", "app", "api", "bot", "scrape")):
+        return {"category": "Programming & Tech", "subcategory": "Web Programming", "service_type": "Full Stack"}
+    if any(w in kw for w in ("social media", "instagram", "tiktok", "facebook", "twitter", "marketing")):
+        return {"category": "Digital Marketing", "subcategory": "Social Media Marketing", "service_type": "Social Media Management"}
+    if any(w in kw for w in ("voice", "audio", "podcast", "music", "sound")):
+        return {"category": "Music & Audio", "subcategory": "Voice Over", "service_type": "Business"}
+    return {"category": "Programming & Tech", "subcategory": "Web Programming", "service_type": "General"}
+
+
+def _algo_tags(ctx: dict) -> dict:
+    pool = _keyword_pool(ctx)
+    tags = []
+    for t in pool:
+        t = re.sub(r"[^a-z0-9 ]", "", t.lower()).strip()
+        t = re.sub(r"\s+", " ", t)
+        if t and len(t) <= LIMITS["tag"] and t not in tags:
+            tags.append(t)
+        if len(tags) == LIMITS["tags"]:
+            break
+    return {"tags": tags}
+
+
+def _algo_pricing(ctx: dict) -> dict:
+    a = ctx["anchors"]
+    kw = ctx["keyword"]
+    days = ctx.get("delivery_days") or []
+    basic_days = min(days) if days else 3
+    std_days = int(statistics.median(days)) if days else 5
+    prem_days = max(days) if days else 7
+    return {
+        "packages": [
+            {
+                "tier": "Basic",
+                "name": _trim_words(f"Basic {kw}", LIMITS["package_name"]),
+                "description": _trim_words(f"Starter {kw} package", LIMITS["package_description"]),
+                "delivery_days": basic_days,
+                "revisions": 1,
+                "included": [f"1 {kw} deliverable", "Source files", "Commercial use"],
+                "price": a["basic"],
+            },
+            {
+                "tier": "Standard",
+                "name": _trim_words(f"Standard {kw}", LIMITS["package_name"]),
+                "description": _trim_words(f"Professional {kw} with revisions", LIMITS["package_description"]),
+                "delivery_days": std_days,
+                "revisions": 3,
+                "included": [f"2 {kw} concepts", "Source files", "Commercial use", "Priority support"],
+                "price": a["standard"],
+            },
+            {
+                "tier": "Premium",
+                "name": _trim_words(f"Premium {kw}", LIMITS["package_name"]),
+                "description": _trim_words(f"Top-tier {kw} — full package", LIMITS["package_description"]),
+                "delivery_days": prem_days,
+                "revisions": "Unlimited",
+                "included": [f"3+ {kw} concepts", "Source files", "Commercial use", "Priority support", "Dedicated revisions"],
+                "price": a["premium"],
+            },
+        ],
+        "extras": [
+            {"name": "Extra-fast delivery", "price": 10, "description": "Delivery in 24 hours"},
+            {"name": "Additional revision", "price": 5, "description": "One extra revision round"},
+        ],
+    }
+
+
+def _algo_description(ctx: dict) -> dict:
+    kw = ctx["keyword"]
+    ac = ctx.get("autocomplete") or []
+    secondary = ", ".join(ac[:3]) if ac else kw
+    a = ctx["anchors"]
+    desc = (
+        f"Are you looking for expert {kw} services that rank on Fiverr and deliver real results? "
+        f"You've come to the right place.\n\n"
+        f"WHAT YOU GET\n"
+        f"• Professional {kw} tailored to your brand\n"
+        f"• Fast delivery with clear communication\n"
+        f"• Unlimited revisions on Premium package\n"
+        f"• 100% original, commercial-use work\n\n"
+        f"WHY CHOOSE ME\n"
+        f"• Specialised in {secondary}\n"
+        f"• Packages starting from ${a['basic']} — something for every budget\n"
+        f"• Satisfaction guaranteed or full revision\n\n"
+        f"HOW IT WORKS\n"
+        f"1. Place your order and fill in the requirements form\n"
+        f"2. I'll start immediately and keep you updated\n"
+        f"3. Receive your completed {kw} and request changes if needed\n\n"
+        f"Ready to get started? Send me a message or click Order Now!"
+    )
+    # Strip to limit
+    if len(desc) > LIMITS["description"]:
+        desc = desc[:LIMITS["description"]]
+    return {"description": desc}
+
+
+def _algo_faq(ctx: dict) -> dict:
+    kw = ctx["keyword"]
+    a = ctx["anchors"]
+    return {"faq": [
+        {"question": f"What is included in the Basic {kw} package?",
+         "answer": f"The Basic package includes one {kw} deliverable, source files, and commercial use rights, delivered within the stated timeframe."},
+        {"question": "How many revisions do I get?",
+         "answer": "Basic includes 1 revision, Standard includes 3, and Premium includes unlimited revisions until you are 100% satisfied."},
+        {"question": "What information do you need from me?",
+         "answer": f"Please provide your business name, preferred style, color preferences, and any examples you like. The more detail, the better the {kw} result."},
+        {"question": "How long does delivery take?",
+         "answer": f"Delivery times vary by package — from as fast as {min(ctx.get('delivery_days') or [3])} days for Basic up to {max(ctx.get('delivery_days') or [7])} days for Premium."},
+        {"question": "Do I own the rights to the final work?",
+         "answer": "Yes. Upon completion and payment, you receive full commercial rights to all deliverables."},
+        {"question": f"Can you match my existing brand style for {kw}?",
+         "answer": "Absolutely. Share your brand guidelines or examples and I will align the work to your existing identity."},
+    ]}
+
+
+def _algo_requirements(ctx: dict) -> dict:
+    kw = ctx["keyword"]
+    return {"requirements": [
+        {"question": f"Please describe your {kw} project in detail (purpose, audience, tone).",
+         "type": "free_text", "options": [], "required": True},
+        {"question": "What style do you prefer?",
+         "type": "multiple_choice",
+         "options": ["Modern & Minimal", "Classic & Professional", "Bold & Creative", "Other — describe below"],
+         "required": True},
+        {"question": "Do you have any reference examples or inspirations?",
+         "type": "free_text", "options": [], "required": False},
+        {"question": "Please upload any brand assets (logo, fonts, colors) if available.",
+         "type": "file_upload", "options": [], "required": False},
+    ]}
+
+
+def _algo_gallery(ctx: dict) -> dict:
+    kw = ctx["keyword"]
+    slug = _slug_words(kw)
+    tags = ctx.get("autocomplete") or ctx.get("tags") or []
+    t1 = _slug_words(tags[0]) if tags else slug + "-sample"
+    t2 = _slug_words(tags[1]) if len(tags) > 1 else slug + "-example"
+    return {"gallery": [
+        {"filename": f"{slug}-portfolio-showcase.jpg",
+         "note": f"A polished showcase of {kw} work highlighting quality and style."},
+        {"filename": f"{slug}-{t1}-example.jpg",
+         "note": f"Side-by-side before/after demonstrating the {kw} process and results."},
+        {"filename": f"{slug}-{t2}-delivery.jpg",
+         "note": f"Final delivered {kw} file previewed in a realistic mockup context."},
+    ]}
+
+
+_ALGO_GENERATORS = {
+    "titles":       _algo_titles,
+    "category":     _algo_category,
+    "tags":         _algo_tags,
+    "pricing":      _algo_pricing,
+    "description":  _algo_description,
+    "faq":          _algo_faq,
+    "requirements": _algo_requirements,
+    "gallery":      _algo_gallery,
+}
+
+
+def _algo_fallback(section: str, ctx: dict):
+    """Return deterministic section content without any LLM call."""
+    gen = _ALGO_GENERATORS.get(section)
+    if gen is None:
+        return None
+    try:
+        raw = gen(ctx)
+        return CLEANERS[section](raw, ctx)
+    except Exception as exc:
+        logger.warning("Algorithmic fallback failed for %s: %s", section, exc)
+        return None
+
+
 async def generate_section(section: str, ctx: dict):
-    prompt = PROMPTS[section]
-    if section == "pricing":
-        a = ctx["anchors"]
-        prompt = prompt.replace("${basic}", f"${a['basic']}").replace("${standard}", f"${a['standard']}") \
-                       .replace("${premium}", f"${a['premium']}")
-    # LlmChat uses sync litellm.completion internally -> run off the event loop so the API stays responsive
-    text = await run_chat(_gig_chat(), f"{_ctx_block(ctx)}\n{prompt}")
-    return CLEANERS[section](_parse_json(text, {}), ctx)
+    """Try LLM first; fall back to algorithmic generation if LLM unavailable."""
+    chat = _gig_chat()
+    if chat is not None:
+        prompt = PROMPTS[section]
+        if section == "pricing":
+            a = ctx["anchors"]
+            prompt = (prompt
+                      .replace("${basic}", f"${a['basic']}")
+                      .replace("${standard}", f"${a['standard']}")
+                      .replace("${premium}", f"${a['premium']}")
+                      )
+        try:
+            text = await run_chat(chat, f"{_ctx_block(ctx)}\n{prompt}")
+            result = CLEANERS[section](_parse_json(text, {}), ctx)
+            if result:  # LLM gave usable output
+                return result
+        except Exception as exc:
+            logger.warning("LLM failed for section %s (%s) — using algorithmic fallback", section, exc)
+    else:
+        logger.info("No LLM key available — using algorithmic fallback for section %s", section)
+    # Algorithmic fallback
+    return _algo_fallback(section, ctx)
 
 
 # ---------------- checklist ----------------
@@ -468,6 +749,12 @@ def present(setup: dict, pro: bool) -> dict:
 
 # ---------------- DOCX ----------------
 def build_docx(setup: dict) -> bytes:
+    if not HAS_DOCX:
+        raise HTTPException(
+            503,
+            "python-docx not installed on this server. DOCX export unavailable. "
+            "Run: pip install python-docx"
+        )
     s = setup["sections"]
     doc = Document()
     doc.styles["Normal"].font.name = "Calibri"

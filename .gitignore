@@ -95,3 +95,6 @@ credentials.json
 .credentials
 frontend/node_modules/.cache/default-development/1.pack
 frontend/node_modules/.cache/default-development/3.pack
+
+# Local stub for Emergent proprietary package (not on PyPI)
+backend/emergentintegrations/
