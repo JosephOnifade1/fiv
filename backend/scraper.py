@@ -69,12 +69,17 @@ _HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
+    "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
     "Sec-Fetch-Dest": "document",
     "Sec-Fetch-Mode": "navigate",
     "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
     "Cache-Control": "no-cache",
 }
 
@@ -235,7 +240,7 @@ def _extract_next_data(html: str) -> Optional[dict]:
 def _detect_block(html: str, url: str) -> None:
     """Raise ScraperBlockedError if the HTML looks like a block page."""
     lower = html.lower()
-    if "verify you are human" in lower or "just a moment" in lower:
+    if "verify you are human" in lower or "just a moment" in lower or "human touch" in lower or "press & hold" in lower:
         raise ScraperBlockedError("CAPTCHA / human-verification page returned")
     if "/checkpoint/" in url:
         raise ScraperBlockedError(f"Redirected to checkpoint: {url}")
@@ -460,6 +465,93 @@ def _parse_gigs_from_next_data(data: dict, keyword: str, page: int, fetch_url: s
     return gigs, _safe_int(total_services)
 
 
+
+def _parse_gigs_from_html(html: str, keyword: str, page: int, fetch_url: str, fetched_at: str) -> tuple[list[dict], Optional[int]]:
+    """
+    Extract gig listings directly from server-rendered HTML cards
+    when __NEXT_DATA__ JSON is not present in the Fiverr response.
+    """
+    gigs = []
+    blocks = html.split("basic-gig-card")
+    total_services = None
+    tot_m = re.search(r'([\d,]+)\s*(?:\+\s*)?services\s+available', html, re.I)
+    if tot_m:
+        try:
+            total_services = int(tot_m.group(1).replace(",", ""))
+        except Exception:
+            pass
+
+    seen_urls = set()
+    position = (page - 1) * 48 + 1
+
+    for b in blocks[1:]:
+        title_m = re.search(r'class="[^"]*gig-header[^"]*"[^>]*title="([^"]+)"', b)
+        if not title_m:
+            title_m = re.search(r'class="[^"]*gig-header[^"]*"[^>]*>(.*?)</p>', b, re.DOTALL)
+        if not title_m:
+            continue
+        title = re.sub(r'<[^>]+>', '', title_m.group(1)).strip()
+        if not title:
+            continue
+
+        url_m = re.search(r'<a\s+[^>]*href="(/[^"?]+)', b)
+        gig_url = None
+        if url_m:
+            rel = url_m.group(1).strip()
+            if not rel.startswith("/search") and not rel.startswith("/categories"):
+                gig_url = f"https://www.fiverr.com{rel}"
+                if gig_url in seen_urls:
+                    continue
+                seen_urls.add(gig_url)
+
+        rating_m = re.search(r'class="rating-score[^"]*">([\d\.]+)<', b)
+        rating = float(rating_m.group(1)) if rating_m else None
+
+        rev_m = re.search(r'class="rating-count-number">([^<]+)<', b)
+        reviews_count = None
+        if rev_m:
+            raw_rev = rev_m.group(1).strip()
+            if "k" in raw_rev.lower():
+                try:
+                    reviews_count = int(float(raw_rev.lower().replace("k", "").replace("+", "")) * 1000)
+                except Exception:
+                    reviews_count = None
+            else:
+                num = re.sub(r'[^\d]', '', raw_rev)
+                reviews_count = int(num) if num else None
+
+        level_m = re.search(r'>(Level \d|Top Rated|New Seller|Fiverr Pro)<', b, re.I)
+        raw_level = level_m.group(1) if level_m else "New Seller"
+        seller_level = _normalize_seller_level(raw_level)
+        is_fiverr_pro = bool("fiverr pro" in raw_level.lower() or "pro-experience" in b)
+
+        price_m = re.search(r'(?:From|Starting at|US\$|\$)\s*([\d,]+(?:\.\d+)?)', b, re.I)
+        price_from = float(price_m.group(1).replace(",", "")) if price_m else None
+
+        is_promoted = bool("is_ad" in b or "sponsored" in b.lower() or "promoted" in b.lower())
+
+        gigs.append({
+            "position": position,
+            "title": title,
+            "seller_level": seller_level,
+            "is_fiverr_pro": is_fiverr_pro,
+            "price_from": price_from,
+            "orders_in_queue": None,
+            "reviews_last_7d": None,
+            "favourites": None,
+            "rating": rating,
+            "reviews_count": reviews_count,
+            "is_promoted": is_promoted if is_promoted else None,
+            "delivery_days": None,
+            "gig_url": gig_url,
+            "_source_page": page,
+            "_source_url": fetch_url,
+            "_fetched_at": fetched_at,
+        })
+        position += 1
+
+    return gigs, total_services
+
 def _deep_find_gigs(obj, depth=0) -> list:
     """Recursively search for a key named 'gigs' that holds a non-empty list."""
     if depth > 8:
@@ -553,28 +645,33 @@ async def _live_scrape(keyword: str) -> dict:
             source_urls.append(final_url)
             fetched_pages += 1
 
-            # Extract __NEXT_DATA__
+            # Extract gigs: try __NEXT_DATA__ first, fallback to server-rendered HTML cards
             nd = _extract_next_data(html)
-            if nd is None:
-                if page_num == 1:
-                    raise ScraperParseError(
-                        "No __NEXT_DATA__ JSON found in Fiverr response — page structure has changed"
-                    )
-                logger.warning("No __NEXT_DATA__ on page %d; stopping pagination", page_num)
-                break
+            page_gigs = []
+            page_total = None
 
-            page_gigs, page_total = _parse_gigs_from_next_data(nd, keyword, page_num, final_url, fetched_at)
+            if nd is not None:
+                page_gigs, page_total = _parse_gigs_from_next_data(nd, keyword, page_num, final_url, fetched_at)
+
+            # If __NEXT_DATA__ missing or empty, parse HTML cards directly
+            if not page_gigs:
+                html_gigs, html_total = _parse_gigs_from_html(html, keyword, page_num, final_url, fetched_at)
+                if html_gigs:
+                    page_gigs = html_gigs
+                    page_total = html_total
 
             if page_total is not None and total_services is None:
                 total_services = page_total
 
             if not page_gigs:
                 if page_num == 1:
+                    if nd is None:
+                        raise ScraperParseError(
+                            "No __NEXT_DATA__ JSON nor HTML gig cards found in Fiverr response — page structure has changed"
+                        )
                     raise ScraperNoResultsError(
-                        f"__NEXT_DATA__ found but no gig listings extracted for '{keyword}' "
-                        f"(page structure may have changed)"
+                        f"__NEXT_DATA__ found but no gig listings extracted for '{keyword}'"
                     )
-                # Subsequent pages with no results = done
                 logger.info("No gigs on page %d; stopping pagination", page_num)
                 break
 

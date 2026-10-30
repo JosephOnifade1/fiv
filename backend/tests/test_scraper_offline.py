@@ -732,3 +732,86 @@ class TestLimits:
                 result = await deep_scrape("logo")
         assert len(result["gigs"]) <= sc.MAX_GIGS
 
+
+
+# ===========================================================================
+# 11. HTML Server-Rendered Markup Parsing (when __NEXT_DATA__ absent)
+# ===========================================================================
+
+class TestHtmlParsing:
+    def test_parse_gigs_from_html_cards(self):
+        """Test extraction of real fields from basic-gig-card HTML blocks."""
+        sample_html = """
+        <html><body>
+        <div class="basic-gig-card">
+            <a href="/designer1/design-modern-minimalist-logo">
+                <p class="gig-header" title="I will design modern minimalist logo for brand">I will design modern minimalist logo for brand</p>
+            </a>
+            <div class="orca-rating">
+                <strong class="rating-score">4.9</strong>
+                <span class="rating-count-number">1.2k</span>
+            </div>
+            <p>Level 2</p>
+            <span>Starting at $35.00</span>
+        </div>
+        <div class="basic-gig-card">
+            <a href="/pro_agency/create-custom-ecommerce-store">
+                <p class="gig-header" title="I will create custom ecommerce store">I will create custom ecommerce store</p>
+            </a>
+            <div class="orca-rating">
+                <strong class="rating-score">5.0</strong>
+                <span class="rating-count-number">45</span>
+            </div>
+            <p>Top Rated</p>
+            <span>From $150</span>
+        </div>
+        <div>12,450 services available</div>
+        </body></html>
+        """
+        gigs, total = sc._parse_gigs_from_html(sample_html, "logo", 1, "https://fiverr.com/search/gigs", "2026-10-30T00:00:00Z")
+        assert len(gigs) == 2
+        assert total == 12450
+
+        g1 = gigs[0]
+        assert "minimalist logo" in g1["title"]
+        assert g1["seller_level"] == "Level 2"
+        assert g1["price_from"] == 35.0
+        assert g1["rating"] == 4.9
+        assert g1["reviews_count"] == 1200
+        assert g1["gig_url"] == "https://www.fiverr.com/designer1/design-modern-minimalist-logo"
+
+        g2 = gigs[1]
+        assert g2["seller_level"] == "Top Rated"
+        assert g2["price_from"] == 150.0
+        assert g2["rating"] == 5.0
+        assert g2["reviews_count"] == 45
+
+    def test_detect_block_catches_human_touch(self):
+        """Fiverr's 'It needs a human touch' page must raise ScraperBlockedError."""
+        block_html = "<html><head><title>It needs a human touch</title></head><body>" + "x" * 4000 + "</body></html>"
+        with pytest.raises(sc.ScraperBlockedError):
+            sc._detect_block(block_html, "https://fiverr.com/search/gigs")
+
+    @pytest.mark.asyncio
+    async def test_deep_scrape_succeeds_on_html_cards_alone(self):
+        """deep_scrape must return live data when only HTML cards are present (no __NEXT_DATA__)."""
+        sample_html = """
+        <html><body>
+        <div class="basic-gig-card">
+            <a href="/expert/create-logo">
+                <p class="gig-header" title="I will create an amazing logo design">I will create an amazing logo design</p>
+            </a>
+            <strong class="rating-score">4.8</strong>
+            <span class="rating-count-number">200</span>
+            <p>Level 1</p>
+            <span>Starting at $25</span>
+        </div>
+        """ + ("x" * 4000) + "</body></html>"
+        resp = _make_resp(200, sample_html)
+        empty_resp = _make_resp(200, "<html><body>" + ("x" * 4000) + "</body></html>")
+        with patch.object(sc, "INTER_PAGE_DELAY", 0):
+            with _patch_client([resp, empty_resp, empty_resp]):
+                res = await deep_scrape("logo")
+        assert res["data_source"] == "live"
+        assert len(res["gigs"]) == 1
+        assert res["gigs"][0]["price_from"] == 25.0
