@@ -10,27 +10,26 @@ Write-Host "=== FiverrScout Local Dev Launcher ===" -ForegroundColor Cyan
 Write-Host ""
 
 # ── Check MongoDB ─────────────────────────────────────────────────────────────
-Write-Host "Checking MongoDB..." -ForegroundColor Yellow
-try {
-    $tcpClient = New-Object System.Net.Sockets.TcpClient
-    $tcpClient.Connect("localhost", 27017)
-    $tcpClient.Close()
-    Write-Host "  MongoDB is running on localhost:27017" -ForegroundColor Green
-} catch {
-    Write-Host ""
-    Write-Host "  ERROR: MongoDB is not running on localhost:27017" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "  You need MongoDB to run the backend. Choose one option:" -ForegroundColor Yellow
-    Write-Host "  1. Install MongoDB Community: https://www.mongodb.com/try/download/community"
-    Write-Host "  2. Use MongoDB Atlas (free): https://www.mongodb.com/cloud/atlas"
-    Write-Host "     Then update MONGO_URL in backend\.env"
-    Write-Host ""
-    Write-Host "  After installing MongoDB locally, start it with:" -ForegroundColor Yellow
-    Write-Host '  net start MongoDB'
-    Write-Host "  or run: mongod --dbpath C:\data\db"
-    Write-Host ""
-    $choice = Read-Host "Continue anyway without MongoDB? (y/N)"
-    if ($choice -ne "y" -and $choice -ne "Y") { exit 1 }
+Write-Host "Checking MongoDB connection..." -ForegroundColor Yellow
+$mongoCheck = & $PYTHON -c "
+import os
+from dotenv import load_dotenv
+from pymongo import MongoClient
+load_dotenv('$ROOT\backend\.env')
+url = os.getenv('MONGO_URL', 'mongodb://localhost:27017')
+try:
+    c = MongoClient(url, serverSelectionTimeoutMS=4000)
+    c.list_database_names()
+    print('OK')
+except Exception as e:
+    print('FAIL: ' + str(e)[:120])
+" 2>&1
+
+if ($mongoCheck -match "OK") {
+    Write-Host "  MongoDB connection verified successfully!" -ForegroundColor Green
+} else {
+    Write-Host "  WARNING: MongoDB check reported: $mongoCheck" -ForegroundColor Yellow
+    Write-Host "  Check your MONGO_URL in backend\.env" -ForegroundColor Yellow
 }
 
 # ── Start Backend ─────────────────────────────────────────────────────────────
