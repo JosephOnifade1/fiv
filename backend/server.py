@@ -35,8 +35,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("fiverr-scout")
 
 # --- Mongo ---
+try:
+    import certifi
+    CA_FILE = certifi.where()
+except Exception:
+    CA_FILE = None
+
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
+if CA_FILE and ('mongodb.net' in mongo_url or 'ssl=true' in mongo_url.lower()):
+    client = AsyncIOMotorClient(mongo_url, tlsCAFile=CA_FILE)
+else:
+    client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 users_col = db.fs_users
 jobs_col = db.fs_jobs
