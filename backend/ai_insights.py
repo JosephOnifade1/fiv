@@ -1,16 +1,9 @@
-"""Gemini 3 Flash insights — Niche Arbitrage Specialist (2026 edition)."""
+"""Gemini insights — Niche Arbitrage Specialist (Google Gemini + Emergent support)."""
 import os
 import json
 import uuid
 import asyncio
-from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-
-async def run_chat(chat: LlmChat, text: str) -> str:
-    # LlmChat calls sync litellm internally; run it off the event loop
-    return await asyncio.to_thread(lambda: asyncio.run(chat.send_message(UserMessage(text=text))))
-
-EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
+import re
 
 SYSTEM = (
     "You are a Niche Arbitrage Specialist for the Fiverr marketplace in 2026. "
@@ -24,12 +17,79 @@ SYSTEM = (
 )
 
 
-def _chat() -> LlmChat:
-    return LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"fiverr-{uuid.uuid4()}",
-        system_message=SYSTEM,
-    ).with_model("gemini", "gemini-3-flash-preview")
+async def run_chat_prompt(system_prompt: str, user_text: str) -> str:
+    """Call Gemini using either direct google.generativeai or emergentintegrations."""
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("EMERGENT_LLM_KEY", "")
+
+    # 1. Native Google Gemini SDK (google-generativeai)
+    if api_key:
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+            for m_name in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-pro"]:
+                try:
+                    model = genai.GenerativeModel(
+                        model_name=m_name,
+                        system_instruction=system_prompt
+                    )
+                    res = await asyncio.to_thread(model.generate_content, user_text)
+                    if res and res.text:
+                        return res.text
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # 2. EmergentIntegrations LlmChat fallback
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"fiverr-{uuid.uuid4()}",
+            system_message=system_prompt,
+        ).with_model("gemini", "gemini-3-flash-preview")
+        return await asyncio.to_thread(lambda: asyncio.run(chat.send_message(UserMessage(text=user_text))))
+    except Exception as e:
+        raise RuntimeError(f"Gemini call failed. Ensure GEMINI_API_KEY is set: {e}")
+
+
+async def run_chat(chat_obj_or_sys, text: str) -> str:
+    """Compatibility layer with existing codebase."""
+    if isinstance(chat_obj_or_sys, str):
+        sys_p = chat_obj_or_sys
+    else:
+        sys_p = getattr(chat_obj_or_sys, "system_message", SYSTEM)
+    return await run_chat_prompt(sys_p, text)
+
+
+def _chat():
+    class DummyChat:
+        system_message = SYSTEM
+    return DummyChat()
+
+
+def _parse_json(text: str, default):
+    if not text:
+        return default
+    text = text.strip()
+    if "```json" in text:
+        m = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
+        if m:
+            text = m.group(1).strip()
+    elif "```" in text:
+        m = re.search(r"```\s*(.*?)\s*```", text, re.DOTALL)
+        if m:
+            text = m.group(1).strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        m = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(1))
+            except Exception:
+                pass
+    return default
 
 
 async def expand_keywords(base_keyword: str, gig_titles: list[str]) -> dict:
@@ -41,7 +101,7 @@ async def expand_keywords(base_keyword: str, gig_titles: list[str]) -> dict:
         "sub-niches. Favor industry/vertical mashups with 2026 trends.\n\n"
         "STRICT JSON: {\"expansions\": [{\"keyword\": \"...\", \"rationale\": \"...\", \"target_audience\": \"...\"}]}"
     )
-    return _parse_json(await run_chat(_chat(), prompt), {"expansions": []})
+    return _parse_json(await run_chat(SYSTEM, prompt), {"expansions": []})
 
 
 async def summarize_report(keyword: str, analytics: dict, gigs: list[dict]) -> dict:
@@ -49,81 +109,67 @@ async def summarize_report(keyword: str, analytics: dict, gigs: list[dict]) -> d
         "title": g.get("title", "")[:80], "level": g.get("seller_level"),
         "pro": g.get("is_fiverr_pro"), "price": g.get("price_from"),
         "queue": g.get("orders_in_queue"), "rating": g.get("rating"),
-        "promoted": g.get("is_promoted"),
-    } for g in gigs[:15]]
+        "reviews": g.get("reviews_count"),
+    } for g in gigs[:10]]
     prompt = (
-        f"Keyword: \"{keyword}\"\nAnalytics: {json.dumps(analytics)}\n"
-        f"Sample gigs: {json.dumps(sample)}\n\n"
-        "Write a 3-bullet executive briefing. ≤28 words each. "
-        "First = headline opportunity/risk. Second = data backing. Third = action.\n\n"
-        "STRICT JSON: {\"bullets\": [\"...\", \"...\", \"...\"], \"verdict\": \"GO|HOLD|AVOID\"}"
+        f"Keyword: \"{keyword}\"\n"
+        f"Analytics summary:\n{json.dumps(analytics, indent=2)}\n\n"
+        f"Sample of top gigs:\n{json.dumps(sample, indent=2)}\n\n"
+        "Produce an executive summary for a seller evaluating this niche.\n"
+        "STRICT JSON: {\n"
+        "  \"verdict\": \"GO\" | \"HOLD\" | \"AVOID\",\n"
+        "  \"verdict_reason\": \"...\",\n"
+        "  \"opportunity_bullets\": [\"...\", \"...\", \"...\"],\n"
+        "  \"risk_bullets\": [\"...\", \"...\"],\n"
+        "  \"recommended_entry_price\": 0,\n"
+        "  \"recommended_positioning\": \"...\"\n"
+        "}"
     )
-    return _parse_json(await run_chat(_chat(), prompt), {"bullets": [], "verdict": "HOLD"})
+    return _parse_json(await run_chat(SYSTEM, prompt), {
+        "verdict": "HOLD", "verdict_reason": "Could not summarize report",
+        "opportunity_bullets": [], "risk_bullets": [], "recommended_entry_price": 25,
+        "recommended_positioning": "Generalist",
+    })
 
 
 async def suggest_pivots(keyword: str, analytics: dict, tags: list[str]) -> dict:
     prompt = (
         f"Keyword: \"{keyword}\"\n"
-        f"Total: {analytics.get('metrics', {}).get('total_services')}, "
-        f"AvgQueue: {analytics.get('metrics', {}).get('avg_orders_in_queue')}, "
-        f"Ratio: {analytics.get('competition_to_order_ratio')}\n"
-        f"Tags: {tags}\n\n"
-        "Suggest 5 side-step pivots reusing the same skill but targeting less competitive audiences. "
-        "Each must explain WHY demand outpaces supply.\n\n"
-        "STRICT JSON: {\"pivots\": [{\"pivot\": \"...\", \"why\": \"...\", \"estimated_demand_supply_ratio\": \"e.g. 4:1\"}]}"
+        f"Metrics: {json.dumps(analytics)}\n"
+        f"Cross-reference tags from competitors: {json.dumps(tags[:25])}\n\n"
+        "Suggest 5 creative pivot angles to enter this market with an unfair advantage.\n"
+        "STRICT JSON: {\"pivots\": [{\"angle\": \"...\", \"why_it_works\": \"...\", \"suggested_title\": \"...\"}]}"
     )
-    return _parse_json(await run_chat(_chat(), prompt), {"pivots": []})
+    return _parse_json(await run_chat(SYSTEM, prompt), {"pivots": []})
 
 
 async def trend_verdict_2026(keyword: str, analytics: dict) -> dict:
-    """Cross-reference with 2026 tech trends to label flash-in-pan vs long-term surge."""
-    metrics = analytics.get("metrics", {})
     prompt = (
         f"Keyword: \"{keyword}\"\n"
+        f"Snapshot: {json.dumps(analytics.get('metrics', {}))}\n"
         f"Velocity Score: {analytics.get('velocity_score')}\n"
         f"Saturation Index: {analytics.get('saturation_index')}\n"
-        f"Promoted CPA %: {metrics.get('promoted_pct')}\n"
-        f"Avg queue: {metrics.get('avg_orders_in_queue')}\n"
-        f"Reviews last 7d / total: {metrics.get('reviews_last_7d')} / {metrics.get('total_reviews')}\n"
-        f"High-Ticket Vacuum: {analytics.get('high_ticket_vacuum')}\n\n"
-        "Cross-reference with 2026 macro tech trends (Physical AI, Neuromorphic, Agentic AI, "
-        "Spatial Computing, Synthetic Biology, Bio-hacking, Vertical SaaS, On-device LLMs, etc). "
-        "Decide if this niche is a FLASH_IN_PAN (≤3 month half-life) or LONG_TERM_SURGE (>12 months).\n\n"
-        "STRICT JSON: {\"verdict\": \"FLASH_IN_PAN|LONG_TERM_SURGE|NEUTRAL\", "
-        "\"matched_trend\": \"the closest 2026 trend or null\", "
-        "\"horizon_months\": 0-24, \"reasoning\": \"≤40 words\"}"
+        f"Promoted CPA signal: {analytics.get('promoted_cpa_signal')}\n\n"
+        "Determine if this niche is a flash-in-the-pan hype cycle or a multi-year secular surge in 2026.\n"
+        "STRICT JSON: {\n"
+        "  \"verdict\": \"FLASH_IN_PAN\" | \"LONG_TERM_SURGE\" | \"NEUTRAL\",\n"
+        "  \"matched_trend\": \"...\",\n"
+        "  \"horizon_months\": 0,\n"
+        "  \"reasoning\": \"...\"\n"
+        "}"
     )
-    return _parse_json(await run_chat(_chat(), prompt),
-                       {"verdict": "NEUTRAL", "matched_trend": None, "horizon_months": 0, "reasoning": ""})
+    return _parse_json(await run_chat(SYSTEM, prompt), {
+        "verdict": "NEUTRAL", "matched_trend": "General freelancing",
+        "horizon_months": 12, "reasoning": "Insufficient trend signal.",
+    })
 
 
-async def proximity_map(base_keyword: str, suggestions: list[str], known_metrics: dict) -> dict:
-    """Map which low-comp keywords sit next to high-demand ones in the autocomplete tree."""
+async def proximity_map(keyword: str, autocomplete_suggestions: list[str], metrics: dict) -> dict:
     prompt = (
-        f"Base: \"{base_keyword}\"\n"
-        f"Live autocomplete neighbors (high-demand signals from Fiverr engine):\n"
-        f"{json.dumps(suggestions)}\n\n"
-        f"Base niche metrics: {json.dumps(known_metrics)}\n\n"
-        "For each neighbor, estimate whether it is LOW_COMPETITION sitting adjacent to "
-        "HIGH_DEMAND (a true side-step). Pick the 5 strongest side-steps. "
-        "Explain audience overlap with the base keyword.\n\n"
-        "STRICT JSON: {\"sidesteps\": [{\"keyword\": \"...\", "
-        "\"competition_estimate\": \"LOW|MID|HIGH\", "
-        "\"demand_estimate\": \"LOW|MID|HIGH\", "
-        "\"audience_overlap_pct\": 0-100, "
-        "\"rationale\": \"≤30 words\"}]}"
+        f"Base keyword: \"{keyword}\"\n"
+        f"Fiverr autocomplete pushes: {json.dumps(autocomplete_suggestions[:12])}\n"
+        f"Niche metrics: {json.dumps(metrics)}\n\n"
+        "Generate an algorithmic proximity map: 4 sidestep opportunities.\n"
+        "STRICT JSON: {\"sidesteps\": [{\"term\": \"...\", \"distance\": \"NEAR\"|\"MID\"|\"FAR\", \"opportunity_hypothesis\": \"...\"}]}"
     )
-    return _parse_json(await run_chat(_chat(), prompt), {"sidesteps": []})
-
-
-def _parse_json(text: str, default: dict) -> dict:
-    text = (text or "").strip()
-    if text.startswith("```"):
-        text = "\n".join(l for l in text.splitlines() if not l.strip().startswith("```"))
-    s, e = text.find("{"), text.rfind("}")
-    if s != -1 and e != -1:
-        text = text[s:e + 1]
-    try:
-        return json.loads(text)
-    except Exception:
-        return default
+    return _parse_json(await run_chat(SYSTEM, prompt), {"sidesteps": []})
