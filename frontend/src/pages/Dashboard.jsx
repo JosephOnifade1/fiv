@@ -103,26 +103,53 @@ export default function Dashboard() {
   };
 
   const pollJob = async (jobId) => {
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 45; i++) {
       await new Promise((res) => setTimeout(res, 1500));
       try {
         const r = await authAxios.get(`/scrape/jobs/${jobId}`);
-        if (r.data.status === "complete") {
-          setActiveJob(r.data);
+        const d = r.data;
+        // Surface partial progress (fetched_pages / gigs_found) during polling
+        if (d.fetched_pages || d.gigs_found) {
+          setActiveJob((prev) => ({
+            ...prev,
+            fetched_pages: d.fetched_pages ?? prev?.fetched_pages,
+            gigs_found: d.gigs_found ?? prev?.gigs_found,
+          }));
+        }
+        if (d.status === "complete") {
+          setActiveJob(d);
           setPolling(false);
           refreshHistory();
-          fetchTrends(r.data.keyword);
-          toast.success(`Scrape complete · Score ${r.data.result?.opportunity_score}`);
+          fetchTrends(d.keyword);
+          const ds = d.result?.data_source;
+          if (ds === "live") {
+            toast.success(`Scan complete · Score ${d.result?.opportunity_score} · ${d.gigs_found ?? d.result?.gigs?.length ?? 0} gigs from ${d.fetched_pages ?? 1} page(s)`);
+          } else if (ds === "no_results") {
+            toast.info("Scan complete — no public listings found for this keyword");
+          } else {
+            toast.success(`Scan complete · Score ${d.result?.opportunity_score}`);
+          }
           return;
         }
-        if (r.data.status === "failed") {
+        if (d.status === "failed") {
+          setActiveJob(d);
           setPolling(false);
-          toast.error("Scrape failed");
+          const ds = d.result?.data_source ?? d.data_source;
+          if (ds === "blocked") {
+            toast.error("Scan blocked — Fiverr returned no data for this request");
+          } else if (ds === "timeout") {
+            toast.error("Scan timed out — try again in a moment");
+          } else if (ds === "parse_error") {
+            toast.error("Scan failed — Fiverr page structure changed, contact support");
+          } else {
+            toast.error("Scan failed — " + (d.scrape_error ?? d.error ?? "unknown error"));
+          }
           return;
         }
       } catch {/* noop */}
     }
     setPolling(false);
+    toast.error("Scan timed out in the browser — check job history for results");
   };
 
   const loadJob = async (jobId) => {
@@ -274,6 +301,14 @@ export default function Dashboard() {
           <LiveNicheBoard activeTaskId={polling ? (activeJob?.id || "pending") : null} onPick={startSearch}
             onBuild={(kw) => buildGig({ keyword: kw })} />
 
+          {polling && activeJob && (
+            <div className="border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-mono text-amber-700 flex items-center gap-3" data-testid="scan-progress-banner">
+              <span className="animate-pulse font-bold">SCANNING</span>
+              <span>{activeJob.keyword}</span>
+              {activeJob.fetched_pages > 0 && <span>· page {activeJob.fetched_pages}</span>}
+              {activeJob.gigs_found > 0 && <span>· {activeJob.gigs_found} gigs</span>}
+            </div>
+          )}
           {!result && !polling && (
             <>
               <div className="border border-zinc-200 bg-zinc-50 p-12 text-center">
@@ -302,10 +337,33 @@ export default function Dashboard() {
                   </h1>
                   <div className="flex items-center gap-3 mt-1 text-[10px] font-mono uppercase tracking-[0.2em]">
                     <span className="flex items-center gap-1 text-zinc-500">
-                      <Circle size={6} weight="fill" className={result.data_source === "live" ? "text-green-500" : "text-amber-500"} />
-                      {result.data_source === "live" ? "LIVE SCRAPE" : "STEALTH FALLBACK"}
+                      <Circle size={6} weight="fill" className={
+                        result.data_source === "live" ? "text-green-500"
+                        : ["blocked","timeout","error","parse_error"].includes(result.data_source) ? "text-red-500"
+                        : result.data_source === "no_results" ? "text-zinc-400"
+                        : "text-amber-500"
+                      } />
+                      {result.data_source === "live"
+                        ? "LIVE DATA"
+                        : result.data_source === "blocked"
+                        ? "BLOCKED — no data collected"
+                        : result.data_source === "timeout"
+                        ? "TIMED OUT — no data collected"
+                        : result.data_source === "parse_error"
+                        ? "PAGE STRUCTURE CHANGED"
+                        : result.data_source === "no_results"
+                        ? "NO LISTINGS FOR THIS KEYWORD"
+                        : result.data_source === "disabled"
+                        ? "LIVE SCRAPING DISABLED"
+                        : (result.data_source || "unknown").toUpperCase()
+                      }
                     </span>
                     <span className="text-zinc-400">{new Date(result.scraped_at).toLocaleString()}</span>
+                    {result.fetched_pages > 0 && (
+                      <span className="text-zinc-400" data-testid="scrape-pages">
+                        {result.fetched_pages}p · {result.gigs?.length ?? 0} gigs
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -328,6 +386,18 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {/* Scrape error / partial-result notice */}
+              {result.scrape_error && (
+                <div className="border border-red-200 bg-red-50 px-4 py-3 text-xs font-mono text-red-700" data-testid="scrape-error-banner">
+                  <span className="font-bold uppercase tracking-wide">Data unavailable</span>
+                  {" — "}{result.scrape_error}
+                </div>
+              )}
+              {result.data_source === "no_results" && !result.scrape_error && (
+                <div className="border border-zinc-200 bg-zinc-50 px-4 py-3 text-xs font-mono text-zinc-500" data-testid="no-results-banner">
+                  No public listings found for this keyword. Try a broader search term.
+                </div>
+              )}
               {/* Score + Ratio + Velocity */}
               <div className="grid lg:grid-cols-3 gap-4">
                 <ScoreGauge score={result.opportunity_score} breakdown={result.breakdown} />

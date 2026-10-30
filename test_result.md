@@ -101,3 +101,62 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Build a production-grade, self-hosted Fiverr market scraper without Apify or simulated fallback."
+
+backend:
+  - task: "Self-hosted public SSR scraper and Next.js data parser"
+    implemented: true
+    working: true
+    file: "backend/scraper.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Implemented httpx-based public SSR scraper extracting __NEXT_DATA__ without stealth spoofing or scraping services. Added 62 offline tests in test_scraper_offline.py covering all edge cases, rate limits, pagination, and block handling."
+
+  - task: "Job deduplication, tracking and progress updates"
+    implemented: true
+    working: true
+    file: "backend/live_pipeline.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added deduplication guards to return existing active task IDs, progress tracking with pages_fetched and gigs_found, and honest data source state persistence in MongoDB."
+
+frontend:
+  - task: "Accurate data source and error UI indicator"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/Dashboard.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Updated Dashboard.jsx to replace STEALTH FALLBACK with LIVE DATA, BLOCKED, TIMEOUT, and NO LISTINGS indicators. Added scrape-error alert banner, progress reporting during polling, and provenance displays."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 1
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Self-hosted public SSR scraper and Next.js data parser"
+    - "Job deduplication, tracking and progress updates"
+    - "Accurate data source and error UI indicator"
+  stuck_tasks: []
+  test_all: true
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Production-grade, self-hosted Fiverr market scraper implemented. Replaced Playwright/simulated fallback architecture with genuine SSR parser and robust honest error tracking. All 62 test scenarios in test_scraper_offline.py pass cleanly."

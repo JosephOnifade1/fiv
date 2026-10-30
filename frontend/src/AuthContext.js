@@ -1,7 +1,12 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import axios from "axios";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const BACKEND_URL = (
+  process.env.REACT_APP_BACKEND_URL ||
+  "https://opportunity-harvest.preview.emergentagent.com"
+).replace(/\/+$/, "");
+
+const API = `${BACKEND_URL}/api`;
 const AuthCtx = createContext(null);
 
 export const useAuth = () => useContext(AuthCtx);

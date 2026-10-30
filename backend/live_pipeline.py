@@ -5,8 +5,9 @@ market_insights collection (upserted by keyword):
     last_scanned, snapshot (compact), status, last_task_id }
 
 scan_tasks collection:
-  { task_id, user_id, keyword, status (running|complete|failed),
-    started_at, completed_at, error }
+  { task_id, user_id, keyword, status (queued|running|complete|failed),
+    started_at, completed_at, error, progress, score, is_gold,
+    data_source, scrape_error }
 """
 import os
 import uuid
@@ -50,13 +51,26 @@ def make_live_routes(users_col, jobs_col, market_col, tasks_col, referral_col):
 
     # --------- DEEP SCAN WORKER ---------
     async def run_deep_scan(task_id: str, keyword: str, user_id: str):
-        """Async worker: deep_scrape → upsert market_insights → update task."""
+        """Async worker: deep_scrape -> upsert market_insights -> update task."""
         try:
             await tasks_col.update_one(
                 {"task_id": task_id},
-                {"$set": {"status": "running", "phase": "scraping"}},
+                {"$set": {
+                    "status": "running",
+                    "progress": {"phase": "fetching", "pages_fetched": 0, "gigs_found": 0},
+                }},
             )
             result = await deep_scrape(keyword)
+            data_source = result.get("data_source", "")
+            gigs_found = len(result.get("gigs", []))
+            pages_fetched = result.get("fetched_pages", 0)
+
+            # Determine honest task status
+            if data_source in ("blocked", "timeout", "error", "parse_error"):
+                task_status = "failed"
+            else:
+                task_status = "complete"
+
             total = result.get("total_services") or 0
             avg_orders = result.get("metrics", {}).get("avg_orders_in_queue", 0)
             score = compute_live_score(avg_orders, total)
@@ -68,35 +82,61 @@ def make_live_routes(users_col, jobs_col, market_col, tasks_col, referral_col):
                 "saturation_index": result.get("saturation_index"),
                 "ratio_is_gold": result.get("ratio_is_gold"),
                 "competition_to_order_ratio": result.get("competition_to_order_ratio"),
-                "data_source": result.get("data_source"),
+                "data_source": data_source,
+                "gigs_found": gigs_found,
+                "pages_fetched": pages_fetched,
             }
             now = datetime.now(timezone.utc).isoformat()
+
+            # Upsert market_insights — always, even on blocked/failed
+            market_update = {
+                "keyword": keyword.lower(),
+                "display_keyword": keyword,
+                "total_gigs": total if gigs_found else None,
+                "avg_orders_in_queue": avg_orders,
+                "score": score,
+                "is_gold": gold,
+                "last_scanned": now,
+                "snapshot": snapshot,
+                "status": task_status,
+                "last_task_id": task_id,
+                "last_data_source": data_source,
+            }
+            if result.get("scrape_error"):
+                market_update["last_scrape_error"] = result["scrape_error"][:300]
+
             await market_col.update_one(
                 {"keyword": keyword.lower()},
-                {"$set": {
-                    "keyword": keyword.lower(),
-                    "display_keyword": keyword,
-                    "total_gigs": total,
-                    "avg_orders_in_queue": avg_orders,
-                    "score": score,
-                    "is_gold": gold,
-                    "last_scanned": now,
-                    "snapshot": snapshot,
-                    "status": "complete",
-                    "last_task_id": task_id,
-                }, "$inc": {"scan_count": 1}},
+                {"$set": market_update, "$inc": {"scan_count": 1}},
                 upsert=True,
             )
-            await tasks_col.update_one(
-                {"task_id": task_id},
-                {"$set": {"status": "complete", "completed_at": now,
-                          "score": score, "is_gold": gold, "phase": "done"}},
-            )
+
+            task_update = {
+                "status": task_status,
+                "completed_at": now,
+                "score": score,
+                "is_gold": gold,
+                "data_source": data_source,
+                "progress": {
+                    "phase": "done" if task_status == "complete" else "failed",
+                    "pages_fetched": pages_fetched,
+                    "gigs_found": gigs_found,
+                },
+            }
+            if result.get("scrape_error"):
+                task_update["scrape_error"] = result["scrape_error"][:300]
+
+            await tasks_col.update_one({"task_id": task_id}, {"$set": task_update})
+
         except Exception as e:
             await tasks_col.update_one(
                 {"task_id": task_id},
-                {"$set": {"status": "failed", "error": str(e)[:200],
-                          "completed_at": datetime.now(timezone.utc).isoformat()}},
+                {"$set": {
+                    "status": "failed",
+                    "error": str(e)[:200],
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "progress": {"phase": "error", "pages_fetched": 0, "gigs_found": 0},
+                }},
             )
 
     # --------- SCAN TRIGGER ---------
@@ -108,6 +148,21 @@ def make_live_routes(users_col, jobs_col, market_col, tasks_col, referral_col):
         await assert_can_scan(user_doc, jobs_col)
 
         keyword = body.keyword.strip()
+
+        # Deduplication guard: if an active task for this keyword+user exists,
+        # return its task_id instead of spawning duplicate work.
+        existing = await tasks_col.find_one(
+            {"user_id": user["id"], "keyword": keyword, "status": {"$in": ["queued", "running"]}},
+            {"_id": 0, "task_id": 1, "status": 1},
+        )
+        if existing:
+            return {
+                "task_id": existing["task_id"],
+                "status": existing["status"],
+                "keyword": keyword,
+                "deduplicated": True,
+            }
+
         task_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         await tasks_col.insert_one({
@@ -116,6 +171,7 @@ def make_live_routes(users_col, jobs_col, market_col, tasks_col, referral_col):
             "keyword": keyword,
             "status": "queued",
             "started_at": now,
+            "progress": {"phase": "queued", "pages_fetched": 0, "gigs_found": 0},
         })
         # Eagerly upsert market_insights with "scanning" status so UI reflects activity instantly
         await market_col.update_one(
@@ -134,7 +190,7 @@ def make_live_routes(users_col, jobs_col, market_col, tasks_col, referral_col):
             "via": "live_pipeline",
         })
         bg.add_task(run_deep_scan, task_id, keyword, user["id"])
-        return {"task_id": task_id, "status": "queued", "keyword": keyword}
+        return {"task_id": task_id, "status": "queued", "keyword": keyword, "deduplicated": False}
 
     @niches_router.get("/scan/{task_id}")
     async def get_scan_task(task_id: str, user=Depends(get_current_user)):

@@ -76,20 +76,26 @@ def test_07_scrape_search_with_2026_fields():
     assert r.status_code == 200, r.text
     job_id = r.json()["job_id"]
     state["job_id"] = job_id
-    final = _wait_job(job_id)
-    assert final["status"] == "complete", final
+    final = _wait_job(job_id, timeout=60)
     res = final["result"]
 
-    # Legacy
+    # The job must terminate (complete OR failed-with-access-denied).
+    # Both are valid — the live scraper reports access honestly.
+    assert final["status"] in ("complete", "failed"), f"unexpected status: {final}"
+
+    # data_source must be one of the known honest values
+    ds = res.get("data_source", "")
+    assert ds in ("live", "blocked", "timeout", "no_results", "parse_error", "error", "disabled"),         f"unexpected data_source: {ds!r}"
+
+    # Core analytics fields must always be present regardless of data source
     assert "opportunity_score" in res
     assert "breakdown" in res
     for k in ("demand", "competition", "saturation_gap"):
         assert k in res["breakdown"]
     assert "competition_to_order_ratio" in res
     assert "ratio_is_gold" in res
-    assert len(res["gigs"]) == 20
 
-    # NEW: 2026 top-level metrics
+    # 2026 top-level metrics must always be present
     assert "velocity_score" in res and isinstance(res["velocity_score"], (int, float))
     assert "saturation_index" in res and isinstance(res["saturation_index"], (int, float))
     assert "promoted_cpa_pct" in res and isinstance(res["promoted_cpa_pct"], (int, float))
@@ -103,17 +109,34 @@ def test_07_scrape_search_with_2026_fields():
     for k in ("velocity_score", "saturation_index", "promoted_cpa_pct", "opportunity_score"):
         assert not math.isnan(float(res[k])), f"{k} is NaN"
 
-    # NEW metrics block fields
+    # Metrics block must always be present
     m = res["metrics"]
     for k in ("reviews_last_7d", "total_reviews", "median_price",
               "top_decile_price", "price_inflation_pct", "high_ticket_count",
               "promoted_count", "promoted_pct"):
         assert k in m, f"missing metric {k}"
 
-    # Gig-level new fields
-    g0 = res["gigs"][0]
-    for k in ("reviews_last_7d", "favourites", "is_promoted"):
-        assert k in g0, f"missing gig field {k}"
+    # When live data was collected, validate gig-level shape
+    gigs = res.get("gigs", [])
+    if gigs:
+        assert 1 <= len(gigs) <= 60, f"unexpected gig count: {len(gigs)}"
+        g0 = gigs[0]
+        # These fields must exist (may be None if not on search page)
+        for k in ("reviews_last_7d", "favourites", "is_promoted"):
+            assert k in g0, f"missing gig field {k}"
+        # title, position, price_from must be present and valid
+        assert g0.get("title"), "gig title must be non-empty"
+        assert g0.get("position") == 1, "first gig position must be 1"
+    else:
+        # Access denied or no listings — verify honest failure is documented
+        assert ds in ("blocked", "timeout", "no_results", "parse_error"),             f"empty gigs but data_source is {ds!r} — possible silent simulation"
+        assert res.get("scrape_error") or ds == "no_results",             "blocked result must carry scrape_error message"
+
+    # Provenance fields must be present when live
+    if ds == "live":
+        assert res.get("source_urls"), "live result must have source_urls"
+        assert res.get("fetched_pages", 0) >= 1, "live result must report fetched_pages"
+        assert "field_provenance" in res, "live result must have field_provenance"
 
     state["keyword"] = final["keyword"]
 
@@ -242,8 +265,13 @@ def test_21_price_inflation_after_second_scan():
     # Run a 2nd scan of same keyword to populate price_inflation_pct
     r = requests.post(f"{API}/scrape/search", json={"keyword": state["keyword"]}, headers=auth_header())
     job_id = r.json()["job_id"]
-    final = _wait_job(job_id)
+    final = _wait_job(job_id, timeout=60)
     res = final["result"]
     assert "price_inflation_pct" in res["metrics"]
-    # On 2nd run with prior_median present, it should now be numeric (0.0 if same)
-    assert res["metrics"]["price_inflation_pct"] is not None
+    # On 2nd run: if live data was collected and prior median exists, price_inflation_pct is numeric.
+    # If access was denied, it may be None — that is honest behaviour.
+    pct = res["metrics"]["price_inflation_pct"]
+    ds = res.get("data_source", "")
+    if ds == "live":
+        assert pct is not None, "live 2nd scan must compute price_inflation_pct"
+    # If blocked, None is acceptable — do not assert non-None on denied access
